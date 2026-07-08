@@ -8,11 +8,12 @@ You will be given:
 
 ---
 
-## Task 1: Classification
-Analyze the raw transcript and determine which category the note falls into. You must declare this category inside the YAML frontmatter under the `category` key.
+## Task 1: Classification & Multi-Tagging
+Analyze the raw transcript and determine which categories apply. You can tag **multiple** categories if the note contains overlapping topics. List all applicable categories inside the YAML frontmatter under the `categories` key.
 
-1.  **`appointments`**: Any notes that contain calendar appointments, meetings, tasks, reminders, to-dos, deadlines, or scheduled events.
-2.  **`technical`**: Any notes containing programming code, CLI commands, homelab architecture, configuration parameters, hardware specs, network topology, scientific facts, recipes, or formal methods.
+Categories definitions:
+1.  **`appointments`**: Any calendar appointments, meetings, tasks, reminders, to-dos, deadlines, or scheduled events.
+2.  **`technical`**: Any programming code, CLI commands, database operations, homelab infrastructure, configuration parameters, hardware specs, network topology, scientific facts, recipes, or formal methods.
 3.  **`life`**: General daily daily logs, journal entries, feelings, movie reviews, unstructured thoughts, or casual dictation that does not contain scheduling information or technical specifications.
 
 ---
@@ -55,45 +56,39 @@ Translate spoken punctuation names into their respective symbols:
 
 ---
 
-## Task 3: Formatting Rules based on Category
+## Task 3: Formatting Rules based on Categories
 
-### If Category is `appointments`:
-1.  **YAML Frontmatter:**
-    ```yaml
-    ---
-    category: appointments
-    # Include the following properties ONLY if a calendar event is explicitly scheduled:
-    title: "<Event Title>"
-    allDay: <true | false>
-    date: <YYYY-MM-DD>
-    startTime: "<HH:MM>" # 24-hour format (omit if allDay is true)
-    endTime: "<HH:MM>"   # 24-hour format (omit if allDay is true)
-    ---
-    ```
-2.  **Markdown Structure:**
+Generate the output starting with a YAML frontmatter containing the `categories` list. If multiple categories are matched, output all corresponding markdown sections in the note body.
+
+### Frontmatter Layout
+```yaml
+---
+categories:
+  - <category1>
+  - <category2>  # Optional, if overlapping
+# Include the following properties ONLY if category list contains 'appointments' and an event is explicitly scheduled:
+title: "<Event Title>"
+allDay: <true | false>
+date: <YYYY-MM-DD>
+startTime: "<HH:MM>"
+endTime: "<HH:MM>"
+---
+```
+
+### Note Body Sections
+
+1.  **If `appointments` is in categories:**
     *   `# Cleaned Transcript`: Put the cleaned transcript here.
     *   `# Extracted Tasks`: List the tasks in Obsidian Tasks format: `- [ ] <Task Description> 📅 <YYYY-MM-DD>` (Calculate the date relative to **Today's Reference Date**; omit the date tag if no date is mentioned). If no tasks are present, write "None detected."
 
-### If Category is `technical`:
-1.  **YAML Frontmatter:**
-    ```yaml
-    ---
-    category: technical
-    ---
-    ```
-2.  **Markdown Structure:**
+2.  **If `technical` is in categories:**
     *   `# Technical Summary`: Place a structured representation of the transcript here. Clean the transcript, organize it using logical sections, headers, and list items. Highlight technical terms, commands (use `` `inline code` `` or block code blocks), and specific constants.
     *   `# Key Knowledge & Facts`: Use bullet points to list the main technical takeaways, configuration rules, IP addresses, parameters, or factual updates.
 
-### If Category is `life`:
-1.  **YAML Frontmatter:**
-    ```yaml
-    ---
-    category: life
-    ---
-    ```
-2.  **Markdown Structure:**
-    *   `# Cleaned Transcript`: Put the simple cleaned transcript here. Do not add task logs or knowledge summaries.
+3.  **If `life` is in categories (and it is the ONLY category):**
+    *   `# Cleaned Transcript`: Put the simple cleaned transcript here. Do not add task logs or knowledge tables.
+
+*Note: If both `appointments` and `technical` are matched, output `# Cleaned Transcript` (with tasks) followed by `# Technical Summary` and `# Key Knowledge & Facts`.*
 
 ---
 

@@ -165,36 +165,85 @@ def clean_and_extract_llm(raw_text):
         logging.error(f"Failed to communicate with local LLM: {e}")
         return None
 
-def parse_category_from_llm(llm_content):
+def parse_categories_from_llm(llm_content):
     """
-    Extracts the category property from YAML frontmatter in LLM output.
+    Extracts the list of categories from YAML frontmatter in LLM output.
     Supported categories: 'appointments', 'technical', 'life'.
-    Defaults to 'life' if not found or invalid.
+    Returns a list of identified categories, or ['life'] as a fallback.
     """
     content = llm_content.strip()
     if not content.startswith("---"):
-        return "life"
+        return ["life"]
         
     parts = content.split("---", 2)
     if len(parts) < 3:
-        return "life"
+        return ["life"]
         
     frontmatter = parts[1]
+    categories = []
+    in_categories_block = False
+    
     for line in frontmatter.splitlines():
         line = line.strip()
-        if line.startswith("category:"):
-            category = line.split(":", 1)[1].strip().lower()
-            category = category.replace('"', '').replace("'", "")
-            if category in ("appointments", "technical", "life"):
-                return category
+        if not line:
+            continue
+            
+        # Check if starting categories block
+        if line.startswith("categories:"):
+            # Handle inline list e.g. categories: [appointments, technical]
+            rest = line.split(":", 1)[1].strip()
+            if rest.startswith("[") and rest.endswith("]"):
+                inline_cats = rest[1:-1].split(",")
+                for cat in inline_cats:
+                    cat = cat.strip().replace('"', '').replace("'", "").lower()
+                    if cat in ("appointments", "technical", "life"):
+                        categories.append(cat)
+                in_categories_block = False
+            else:
+                in_categories_block = True
+            continue
+            
+        # If we are inside the block, look for list items (lines starting with -)
+        if in_categories_block:
+            # If line is another key, we exited categories block
+            if ":" in line and not line.startswith("-"):
+                in_categories_block = False
+                continue
+            if line.startswith("-"):
+                cat = line.split("-", 1)[1].strip().replace('"', '').replace("'", "").lower()
+                if cat in ("appointments", "technical", "life"):
+                    categories.append(cat)
+                    
+    # De-duplicate
+    unique_cats = []
+    for c in categories:
+        if c not in unique_cats:
+            unique_cats.append(c)
+            
+    if not unique_cats:
+        return ["life"]
+    return unique_cats
+
+def get_routing_category(categories):
+    """
+    Applies the routing priority to choose a single physical folder.
+    Priority: appointments > technical > life
+    """
+    if "appointments" in categories:
+        return "appointments"
+    if "technical" in categories:
+        return "technical"
     return "life"
 
 def write_to_inbox(original_filename, detected_lang, original_text, llm_content):
     """
     Writes the structured output to the categorized directory in the Obsidian Vault Inbox.
     """
-    category = parse_category_from_llm(llm_content)
-    category_folder = category.capitalize() # Appointments, Technical, Life
+    categories = parse_categories_from_llm(llm_content)
+    routing_category = get_routing_category(categories)
+    
+    # Map to proper capitalized folder name
+    category_folder = routing_category.capitalize() # Appointments, Technical, Life
     target_dir = os.path.join(INBOX_DIR, category_folder)
     
     os.makedirs(target_dir, exist_ok=True)
@@ -209,7 +258,8 @@ def write_to_inbox(original_filename, detected_lang, original_text, llm_content)
     if not has_yaml:
         # Prepend default frontmatter if LLM omitted it
         note_content += f"""---
-category: {category}
+categories:
+  - {routing_category}
 title: "Voice Note: {base_name}"
 date_created: "{datetime.now().strftime('%Y-%m-%d')}"
 tags: ["#voicenote", "#inbox"]
@@ -228,7 +278,7 @@ tags: ["#voicenote", "#inbox"]
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(note_content)
         
-    logging.info(f"Saved note to {category_folder} Inbox: {output_path}")
+    logging.info(f"Saved note to {category_folder} Inbox (Categories: {categories}): {output_path}")
     return output_path
 
 def process_file(filepath):

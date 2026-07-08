@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Voice Notes Harvester & Thought Conveyor
-Processes local multi-lingual voice notes on CPU, cleans them using a local LLM,
-and deposits formatted tasks/events in an Obsidian Vault Inbox.
+Processes local multi-lingual voice notes on CPU, classifies and cleans them using a local LLM,
+and deposits formatted notes in categorized subfolders inside the Obsidian Vault Inbox.
 """
 
 import os
@@ -40,7 +40,7 @@ WHISPER_THREADS = int(os.environ.get("WHISPER_THREADS", "4"))
 # Supported Extensions
 SUPPORTED_EXTENSIONS = (".mp3", ".wav", ".m4a")
 
-# Global Whisper Model Instance (lazy-loaded when first audio is found to save memory when idle)
+# Global Whisper Model Instance
 whisper_model = None
 
 def load_whisper():
@@ -165,35 +165,59 @@ def clean_and_extract_llm(raw_text):
         logging.error(f"Failed to communicate with local LLM: {e}")
         return None
 
+def parse_category_from_llm(llm_content):
+    """
+    Extracts the category property from YAML frontmatter in LLM output.
+    Supported categories: 'appointments', 'technical', 'life'.
+    Defaults to 'life' if not found or invalid.
+    """
+    content = llm_content.strip()
+    if not content.startswith("---"):
+        return "life"
+        
+    parts = content.split("---", 2)
+    if len(parts) < 3:
+        return "life"
+        
+    frontmatter = parts[1]
+    for line in frontmatter.splitlines():
+        line = line.strip()
+        if line.startswith("category:"):
+            category = line.split(":", 1)[1].strip().lower()
+            category = category.replace('"', '').replace("'", "")
+            if category in ("appointments", "technical", "life"):
+                return category
+    return "life"
+
 def write_to_inbox(original_filename, detected_lang, original_text, llm_content):
     """
-    Writes the structured output to the Obsidian Vault Inbox.
+    Writes the structured output to the categorized directory in the Obsidian Vault Inbox.
     """
-    os.makedirs(INBOX_DIR, exist_ok=True)
+    category = parse_category_from_llm(llm_content)
+    category_folder = category.capitalize() # Appointments, Technical, Life
+    target_dir = os.path.join(INBOX_DIR, category_folder)
+    
+    os.makedirs(target_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     base_name, _ = os.path.splitext(original_filename)
     output_filename = f"VoiceNote-{timestamp}.md"
-    output_path = os.path.join(INBOX_DIR, output_filename)
+    output_path = os.path.join(target_dir, output_filename)
     
-    # We construct a clean output note that embeds LLM structured content
-    # and leaves the raw text as collapsible metadata for history.
     note_content = ""
-    
-    # Handle the frontmatter if LLM generated it, or merge with default frontmatter
-    # If the LLM output starts with frontmatter, write it directly.
-    # Otherwise, write default frontmatter first.
     has_yaml = llm_content.strip().startswith("---")
     
     if not has_yaml:
+        # Prepend default frontmatter if LLM omitted it
         note_content += f"""---
+category: {category}
 title: "Voice Note: {base_name}"
 date_created: "{datetime.now().strftime('%Y-%m-%d')}"
 tags: ["#voicenote", "#inbox"]
 ---
 """
-
     note_content += llm_content
     
+    # Append raw data and processing metadata at the bottom for record keeping
     note_content += f"\n\n---\n## Harvester Metadata\n"
     note_content += f"- **Original Audio file:** `{original_filename}`\n"
     note_content += f"- **Detected Language:** `{detected_lang}`\n"
@@ -204,7 +228,7 @@ tags: ["#voicenote", "#inbox"]
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(note_content)
         
-    logging.info(f"Saved reviewable note to Inbox: {output_path}")
+    logging.info(f"Saved note to {category_folder} Inbox: {output_path}")
     return output_path
 
 def process_file(filepath):
@@ -223,7 +247,6 @@ def process_file(filepath):
         logging.error(f"LLM processing failed for {filename}. Will retry on next check.")
         return False
         
-    # Write files to Obsidian Staging Folder
     write_to_inbox(filename, f"{lang} ({prob:.2%})", raw_transcript, llm_content)
     return True
 
@@ -232,7 +255,6 @@ def monitor_loop():
     logging.info(f"Watching: {RAW_DIR}")
     logging.info(f"Writing to: {INBOX_DIR}")
     
-    # Ensure folders exist
     os.makedirs(RAW_DIR, exist_ok=True)
     os.makedirs(INBOX_DIR, exist_ok=True)
     
@@ -251,7 +273,7 @@ def monitor_loop():
             except OSError:
                 continue
                 
-            # If the file path is already tracked with identical size and time, skip it
+            # Skip if file was already processed with same stats
             if filename in state:
                 if state[filename].get("size") == size and state[filename].get("mtime") == mtime:
                     continue
@@ -270,11 +292,9 @@ def monitor_loop():
             except OSError:
                 continue
                 
-            # Execute processing pipeline
             success = process_file(filepath)
             
             if success:
-                # Update state to avoid double execution (raw files are untouched)
                 state[filename] = {
                     "size": size,
                     "mtime": mtime,

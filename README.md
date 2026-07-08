@@ -14,7 +14,10 @@ All scripts, prompts, and logs are isolated inside this directory:
 
 The script operates on the following Obsidian Vault folders:
 *   **Raw Input:** `[VoiceNotes/Raw/](file:///home/fuad/Seafile/Obsidian%20Vaults/VoiceNotes/Raw/)` (Incoming voice files)
-*   **Staging Inbox:** `[VoiceNotes/Inbox/](file:///home/fuad/Seafile/Obsidian%20Vaults/VoiceNotes/Inbox/)` (Review staging area)
+*   **Staging Inbox:** `[VoiceNotes/Inbox/](file:///home/fuad/Seafile/Obsidian%20Vaults/VoiceNotes/Inbox/)` (Review staging area with subfolders):
+    *   `[Inbox/Appointments/](file:///home/fuad/Seafile/Obsidian%20Vaults/VoiceNotes/Inbox/Appointments/)` — Tasks, deadlines, calendar events.
+    *   `[Inbox/Technical/](file:///home/fuad/Seafile/Obsidian%20Vaults/VoiceNotes/Inbox/Technical/)` — CLI logs, specs, codes, and structured facts.
+    *   `[Inbox/Life/](file:///home/fuad/Seafile/Obsidian%20Vaults/VoiceNotes/Inbox/Life/)` — General journals, life notes, fallbacks.
 *   **State Ledger:** `[processed_files.json](file:///home/fuad/Seafile/Obsidian%20Vaults/VoiceNotes/processed_files.json)` (Double-processing guard)
 
 ---
@@ -55,8 +58,17 @@ journalctl --user -u voice-notes-pipeline.service -f
 
 ---
 
-## 4. How the Clean-up Works
+## 4. How the Clean-up & Routing Works
 
-The LLM is prompted to perform two operations:
-1.  **Punctuation Conversion:** Translate spoken words (e.g. *"vergül"*, *"запятая"*, *"comma"*) to their respective punctuation symbols (`,`, `.`, `\n`).
-2.  **Information Extraction:** Create tasks formatted for the **Obsidian Tasks** plugin (`- [ ] Task Description 📅 YYYY-MM-DD`) and calendars events for **Obsidian Full Calendar** (YAML frontmatter blocks) relative to the note's recording date.
+The LLM is prompted to perform three operations:
+1.  **Punctuation Conversion:** Translate spoken words (e.g. *"vergül"*, *"запятая"*, *"comma"*) to their respective symbols (`,`, `.`, `\n`).
+2.  **Classification & Multi-Tagging:** Identify all categories that apply to a note and save them under the `categories` property in the frontmatter.
+3.  **Content Structuring:**
+    *   `appointments`: Formats tasks (`- [ ] Task Description 📅 YYYY-MM-DD`) and full calendar events in the YAML frontmatter.
+    *   `technical`: Synthesizes transcript into structured markdown sections, highlighting commands and parameters, and adding a `# Key Knowledge & Facts` summary.
+    *   `life`: Simple cleaned transcription logs.
+
+### Priority Routing Hierarchy
+The physical markdown file is routed into one subfolder based on the highest matched category:
+$$\text{Appointments (Priority 1)} \rightarrow \text{Technical (Priority 2)} \rightarrow \text{Life (Priority 3/Fallback)}$$
+This preserves single-source-of-truth file architecture while retaining all semantic category tags inside the frontmatter for Obsidian search/indexing.

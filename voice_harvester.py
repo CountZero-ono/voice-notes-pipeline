@@ -2,7 +2,8 @@
 """
 Voice Notes Harvester & Thought Conveyor
 Processes local multi-lingual voice notes on CPU, classifies and cleans them using a local LLM,
-and deposits formatted notes in categorized subfolders inside the Obsidian Vault Inbox.
+deposits formatted notes in categorized subfolders inside the Obsidian Vault Inbox,
+and automatically pushes calendar events and tasks to a Radicale CalDAV server.
 """
 
 import os
@@ -12,6 +13,7 @@ import json
 import logging
 from datetime import datetime
 import requests
+import uuid
 
 # Configure Logging
 logging.basicConfig(
@@ -37,6 +39,13 @@ LLM_MODEL = os.environ.get("LLM_MODEL", "qwen")
 WHISPER_MODEL_NAME = os.environ.get("WHISPER_MODEL", "large-v3-turbo")
 WHISPER_THREADS = int(os.environ.get("WHISPER_THREADS", "4"))
 
+# Radicale CalDAV Configuration
+RADICALE_CALENDAR_URL = os.environ.get("RADICALE_CALENDAR_URL", "http://192.168.1.30:5232/fuad/64e71687-ed01-f827-c34f-38222fd871f5/")
+RADICALE_TASKS_URL = os.environ.get("RADICALE_TASKS_URL", "http://192.168.1.30:5232/fuad/a88e07f8-1c04-17c6-6a6c-5be1c5bf0879/")
+RADICALE_USER = os.environ.get("RADICALE_USER", "fuad")
+RADICALE_PASSWORD = os.environ.get("RADICALE_PASSWORD", "RadicaleTemp123!")
+RADICALE_AUTH = (RADICALE_USER, RADICALE_PASSWORD)
+
 # Supported Extensions
 SUPPORTED_EXTENSIONS = (".mp3", ".wav", ".m4a")
 
@@ -50,7 +59,6 @@ def load_whisper():
         try:
             from faster_whisper import WhisperModel
             logging.info(f"Initializing WhisperModel '{WHISPER_MODEL_NAME}' on CPU...")
-            # Using CPU, compute_type="int8" for speed and efficiency
             whisper_model = WhisperModel(
                 WHISPER_MODEL_NAME,
                 device="cpu",
@@ -58,7 +66,7 @@ def load_whisper():
                 cpu_threads=WHISPER_THREADS
             )
             logging.info("Whisper model loaded successfully on CPU.")
-        except ImportError as e:
+        except ImportError:
             logging.critical("faster-whisper is not installed. Run: pip install faster-whisper")
             sys.exit(1)
         except Exception as e:
@@ -82,14 +90,9 @@ def save_state(state):
         json.dump(state, f, indent=4, ensure_ascii=False)
 
 def wait_for_file_to_stabilize(filepath, check_interval=3, timeout=60):
-    """
-    Ensures that Seafile has finished writing/syncing the file by
-    monitoring its file size until it remains constant.
-    """
     logging.info(f"Waiting for file {os.path.basename(filepath)} to stabilize...")
     start_time = time.time()
     last_size = -1
-    
     while time.time() - start_time < timeout:
         try:
             current_size = os.path.getsize(filepath)
@@ -98,61 +101,40 @@ def wait_for_file_to_stabilize(filepath, check_interval=3, timeout=60):
                 return True
             last_size = current_size
         except OSError:
-            # File might temporarily lock or be inaccessible
             pass
         time.sleep(check_interval)
-        
     logging.warning(f"File stabilization timed out for {filepath}.")
     return False
 
 def transcribe_audio(filepath):
-    """
-    Transcribes the audio file using faster-whisper on CPU.
-    Returns: (raw_transcript_text, detected_language, language_probability)
-    """
     model = load_whisper()
     logging.info(f"Transcribing audio: {filepath}")
-    
-    # Run Whisper transcription
     segments, info = model.transcribe(filepath, beam_size=5)
-    
     raw_text_parts = []
     for segment in segments:
         raw_text_parts.append(segment.text)
-        
     raw_transcript = " ".join(raw_text_parts).strip()
     logging.info(f"ASR complete. Language detected: {info.language} ({info.language_probability:.2f})")
-    
     return raw_transcript, info.language, info.language_probability
 
 def clean_and_extract_llm(raw_text):
-    """
-    Queries the local LLM server to clean up the transcript and extract tasks/events.
-    """
-    # Load system prompt
     if not os.path.exists(SYSTEM_PROMPT_PATH):
         logging.error(f"System prompt file not found at {SYSTEM_PROMPT_PATH}")
         return None
-        
     with open(SYSTEM_PROMPT_PATH, "r", encoding="utf-8") as f:
         system_prompt = f.read()
-
     today_str = datetime.now().strftime("%Y-%m-%d")
-    
-    # Format instruction payload
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": f"Today's Reference Date: {today_str}\n\nRaw Transcription Text:\n{raw_text}"}
     ]
-    
     headers = {"Content-Type": "application/json"}
     payload = {
         "model": LLM_MODEL,
         "messages": messages,
-        "temperature": 0.1,  # Low temperature for highly structured tasks
+        "temperature": 0.1,
         "stream": False
     }
-    
     logging.info(f"Sending transcript to local LLM at {LLM_API_URL}...")
     try:
         response = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=120)
@@ -166,31 +148,20 @@ def clean_and_extract_llm(raw_text):
         return None
 
 def parse_categories_from_llm(llm_content):
-    """
-    Extracts the list of categories from YAML frontmatter in LLM output.
-    Supported categories: 'appointments', 'technical', 'life'.
-    Returns a list of identified categories, or ['life'] as a fallback.
-    """
     content = llm_content.strip()
     if not content.startswith("---"):
         return ["life"]
-        
     parts = content.split("---", 2)
     if len(parts) < 3:
         return ["life"]
-        
     frontmatter = parts[1]
     categories = []
     in_categories_block = False
-    
     for line in frontmatter.splitlines():
         line = line.strip()
         if not line:
             continue
-            
-        # Check if starting categories block
         if line.startswith("categories:"):
-            # Handle inline list e.g. categories: [appointments, technical]
             rest = line.split(":", 1)[1].strip()
             if rest.startswith("[") and rest.endswith("]"):
                 inline_cats = rest[1:-1].split(",")
@@ -202,10 +173,7 @@ def parse_categories_from_llm(llm_content):
             else:
                 in_categories_block = True
             continue
-            
-        # If we are inside the block, look for list items (lines starting with -)
         if in_categories_block:
-            # If line is another key, we exited categories block
             if ":" in line and not line.startswith("-"):
                 in_categories_block = False
                 continue
@@ -213,78 +181,249 @@ def parse_categories_from_llm(llm_content):
                 cat = line.split("-", 1)[1].strip().replace('"', '').replace("'", "").lower()
                 if cat in ("appointments", "technical", "life"):
                     categories.append(cat)
-                    
-    # De-duplicate
     unique_cats = []
     for c in categories:
         if c not in unique_cats:
             unique_cats.append(c)
-            
     if not unique_cats:
         return ["life"]
     return unique_cats
 
-def get_routing_category(categories):
-    """
-    Applies the routing priority to choose a single physical folder.
-    Priority: appointments > technical > life
-    """
-    if "appointments" in categories:
-        return "appointments"
-    if "technical" in categories:
-        return "technical"
-    return "life"
+def parse_event_from_frontmatter(llm_content):
+    content = llm_content.strip()
+    if not content.startswith("---"):
+        return None
+    parts = content.split("---", 2)
+    if len(parts) < 3:
+        return None
+    frontmatter = parts[1]
+    event_data = {}
+    for line in frontmatter.splitlines():
+        line = line.strip()
+        if ":" in line:
+            k, v = line.split(":", 1)
+            k = k.strip().lower()
+            v = v.strip().replace('"', '').replace("'", "")
+            if k in ("title", "date", "starttime", "endtime", "allday"):
+                if k == "title":
+                    event_data["title"] = v
+                elif k == "date":
+                    event_data["date"] = v
+                elif k == "starttime":
+                    event_data["startTime"] = v
+                elif k == "endtime":
+                    event_data["endTime"] = v
+                elif k == "allday":
+                    event_data["allDay"] = v.lower() == "true"
+    if event_data.get("title") and event_data.get("date"):
+        if "allDay" not in event_data:
+            event_data["allDay"] = True
+        return event_data
+    return None
+
+def parse_tasks_from_markdown(llm_content):
+    tasks = []
+    for line in llm_content.splitlines():
+        line = line.strip()
+        if line.startswith("- [ ]"):
+            title = line[5:].strip()
+            due_date = None
+            if "📅" in title:
+                parts = title.split("📅", 1)
+                title = parts[0].strip()
+                date_part = parts[1].strip()
+                if len(date_part) == 10 and date_part[4] == "-" and date_part[7] == "-":
+                    due_date = date_part
+            if title:
+                tasks.append({'title': title, 'due_date': due_date})
+    return tasks
+
+def push_event_to_radicale(title, date_str, start_time=None, end_time=None, all_day=True):
+    from datetime import datetime, timedelta
+    uid = str(uuid.uuid4())
+    dtstamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    title_clean = title.replace('"', '\\"').replace('\n', ' ')
+    
+    if all_day:
+        date_clean = date_str.replace("-", "")
+        try:
+            dt = datetime.strptime(date_str, "%Y-%m-%d")
+            end_dt = dt + timedelta(days=1)
+            end_date_clean = end_dt.strftime("%Y%m%d")
+        except Exception:
+            end_date_clean = date_clean
+        dtstart_line = f"DTSTART;VALUE=DATE:{date_clean}"
+        dtend_line = f"DTEND;VALUE=DATE:{end_date_clean}"
+    else:
+        start_clean = f"{date_str.replace('-', '')}T{start_time.replace(':', '')}00"
+        if end_time:
+            end_clean = f"{date_str.replace('-', '')}T{end_time.replace(':', '')}00"
+        else:
+            try:
+                s_dt = datetime.strptime(f"{date_str} {start_time}", "%Y-%m-%d %H:%M")
+                e_dt = s_dt + timedelta(hours=1)
+                end_clean = e_dt.strftime("%Y%m%dT%H%M%S")
+            except Exception:
+                end_clean = start_clean
+        dtstart_line = f"DTSTART:{start_clean}"
+        dtend_line = f"DTEND:{end_clean}"
+        
+    ics_content = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Voice Notes Pipeline//NONSGML//EN
+BEGIN:VEVENT
+UID:{uid}
+DTSTAMP:{dtstamp}
+SUMMARY:{title_clean}
+{dtstart_line}
+{dtend_line}
+BEGIN:VALARM
+TRIGGER:-PT15M
+ACTION:DISPLAY
+DESCRIPTION:Reminder: {title_clean}
+END:VALARM
+END:VEVENT
+END:VCALENDAR"""
+
+    url = f"{RADICALE_CALENDAR_URL.rstrip('/')}/{uid}.ics"
+    try:
+        r = requests.put(url, data=ics_content.encode('utf-8'), headers={'Content-Type': 'text/calendar; charset=utf-8'}, auth=RADICALE_AUTH, timeout=10)
+        r.raise_for_status()
+        logging.info(f"Successfully pushed event '{title}' to Radicale: {url}")
+        return True
+    except Exception as e:
+        logging.error(f"Failed to push event to Radicale: {e}")
+        return False
+
+def push_task_to_radicale(title, due_date=None):
+    uid = str(uuid.uuid4())
+    dtstamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    title_clean = title.replace('"', '\\"').replace('\n', ' ')
+    
+    due_line = ""
+    alarm_block = ""
+    if due_date:
+        date_clean = due_date.replace("-", "")
+        due_line = f"DUE;VALUE=DATE:{date_clean}"
+        alarm_block = f"""BEGIN:VALARM
+TRIGGER;VALUE=DATE-TIME:{date_clean}T090000
+ACTION:DISPLAY
+DESCRIPTION:Task Reminder: {title_clean}
+END:VALARM"""
+        
+    ics_content = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Voice Notes Pipeline//NONSGML//EN
+BEGIN:VTODO
+UID:{uid}
+DTSTAMP:{dtstamp}
+SUMMARY:{title_clean}
+STATUS:NEEDS-ACTION
+{due_line}
+{alarm_block}
+END:VTODO
+END:VCALENDAR"""
+
+    url = f"{RADICALE_TASKS_URL.rstrip('/')}/{uid}.ics"
+    try:
+        r = requests.put(url, data=ics_content.encode('utf-8'), headers={'Content-Type': 'text/calendar; charset=utf-8'}, auth=RADICALE_AUTH, timeout=10)
+        r.raise_for_status()
+        logging.info(f"Successfully pushed task '{title}' to Radicale: {url}")
+        return True
+    except Exception as e:
+        logging.error(f"Failed to push task to Radicale: {e}")
+        return False
 
 def write_to_inbox(original_filename, detected_lang, original_text, llm_content):
-    """
-    Writes the structured output to the categorized directory in the Obsidian Vault Inbox.
-    """
     categories = parse_categories_from_llm(llm_content)
-    routing_category = get_routing_category(categories)
-    
-    # Map to proper capitalized folder name
-    category_folder = routing_category.capitalize() # Appointments, Technical, Life
-    target_dir = os.path.join(INBOX_DIR, category_folder)
-    
-    os.makedirs(target_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     base_name, _ = os.path.splitext(original_filename)
     output_filename = f"VoiceNote-{timestamp}.md"
-    output_path = os.path.join(target_dir, output_filename)
     
-    note_content = ""
-    has_yaml = llm_content.strip().startswith("---")
-    
-    if not has_yaml:
-        # Prepend default frontmatter if LLM omitted it
-        note_content += f"""---
-categories:
-  - {routing_category}
-title: "Voice Note: {base_name}"
-date_created: "{datetime.now().strftime('%Y-%m-%d')}"
-tags: ["#voicenote", "#inbox"]
----
-"""
-    note_content += llm_content
-    
-    # Append raw data and processing metadata at the bottom for record keeping
-    note_content += f"\n\n---\n## Harvester Metadata\n"
-    note_content += f"- **Original Audio file:** `{original_filename}`\n"
-    note_content += f"- **Detected Language:** `{detected_lang}`\n"
-    note_content += f"- **Processed At:** `{datetime.now().isoformat()}`\n\n"
-    note_content += f"### Original Raw Transcription\n"
-    note_content += f"> {original_text}\n"
-    
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write(note_content)
+    destinations = []
+    for cat in categories:
+        folder = cat.capitalize()
+        target_dir = os.path.join(INBOX_DIR, folder)
+        full_path = os.path.join(target_dir, output_filename)
+        wiki_link = f"VoiceNotes/Inbox/{folder}/{output_filename[:-3]}"
+        destinations.append({
+            "category": cat,
+            "full_path": full_path,
+            "wiki_link": wiki_link,
+            "display_path": f"Inbox/{folder}/{output_filename}"
+        })
         
-    logging.info(f"Saved note to {category_folder} Inbox (Categories: {categories}): {output_path}")
-    return output_path
+    for dest in destinations:
+        os.makedirs(os.path.dirname(dest["full_path"]), exist_ok=True)
+        
+        # Parse existing frontmatter keys if present
+        body = llm_content
+        yaml_data = {}
+        has_yaml = llm_content.strip().startswith("---")
+        if has_yaml:
+            parts = llm_content.split("---", 2)
+            if len(parts) >= 3:
+                # Read key-value frontmatter lines manually (avoiding PyYAML)
+                for line in parts[1].splitlines():
+                    line = line.strip()
+                    if ":" in line and not line.startswith("-"):
+                        k, v = line.split(":", 1)
+                        yaml_data[k.strip()] = v.strip().replace('"', '').replace("'", "")
+                body = parts[2]
+                
+        # Merge YAML keys
+        yaml_data["categories"] = categories
+        if "title" not in yaml_data:
+            yaml_data["title"] = f"Voice Note: {base_name}"
+        if "date_created" not in yaml_data:
+            yaml_data["date_created"] = datetime.now().strftime('%Y-%m-%d')
+        if "tags" not in yaml_data:
+            yaml_data["tags"] = ["voicenote", "inbox"]
+            
+        siblings = [d["display_path"] for d in destinations if d != dest]
+        if siblings:
+            yaml_data["copies"] = siblings
+            
+        # Rebuild YAML block
+        yaml_lines = ["---"]
+        for k, v in yaml_data.items():
+            if k == "categories" or k == "copies":
+                yaml_lines.append(f"{k}:")
+                for item in (categories if k == "categories" else siblings):
+                    yaml_lines.append(f"  - {item}")
+            elif k == "tags":
+                yaml_lines.append("tags:")
+                for tag in ["voicenote", "inbox"]:
+                    yaml_lines.append(f"  - {tag}")
+            else:
+                yaml_lines.append(f"{k}: \"{v}\"")
+        yaml_lines.append("---")
+        yaml_str = "\n".join(yaml_lines) + "\n"
+        
+        note_content = yaml_str + body
+        
+        # Append cross-posting Obsidian links
+        if siblings:
+            note_content += "\n\n> [!NOTE] Cross-Posted\n> This note was also routed to:\n"
+            for d in destinations:
+                if d != dest:
+                    note_content += f"> - [[{d['wiki_link']}|{d['display_path']}]]\n"
+                    
+        # Append processing metadata
+        note_content += f"\n\n---\n## Harvester Metadata\n"
+        note_content += f"- **Original Audio file:** `{original_filename}`\n"
+        note_content += f"- **Detected Language:** `{detected_lang}`\n"
+        note_content += f"- **Processed At:** `{datetime.now().isoformat()}`\n\n"
+        note_content += f"### Original Raw Transcription\n"
+        note_content += f"> {original_text}\n"
+        
+        with open(dest["full_path"], "w", encoding="utf-8") as f:
+            f.write(note_content)
+            
+    logging.info(f"Saved note copies to {[d['display_path'] for d in destinations]} (Categories: {categories})")
+    return [d["full_path"] for d in destinations]
 
 def process_file(filepath):
-    """
-    Fully orchestrates transcription and LLM processing of a single audio file.
-    """
     filename = os.path.basename(filepath)
     raw_transcript, lang, prob = transcribe_audio(filepath)
     
@@ -298,6 +437,27 @@ def process_file(filepath):
         return False
         
     write_to_inbox(filename, f"{lang} ({prob:.2%})", raw_transcript, llm_content)
+    
+    # Push to CalDAV if categorized as appointments
+    categories = parse_categories_from_llm(llm_content)
+    if "appointments" in categories:
+        logging.info("Appointments category detected. Syncing with CalDAV...")
+        event = parse_event_from_frontmatter(llm_content)
+        if event:
+            push_event_to_radicale(
+                title=event.get("title"),
+                date_str=event.get("date"),
+                start_time=event.get("startTime"),
+                end_time=event.get("endTime"),
+                all_day=event.get("allDay", True)
+            )
+        tasks = parse_tasks_from_markdown(llm_content)
+        for task in tasks:
+            push_task_to_radicale(
+                title=task.get("title"),
+                due_date=task.get("due_date")
+            )
+            
     return True
 
 def monitor_loop():
@@ -311,11 +471,8 @@ def monitor_loop():
     while True:
         state = load_state()
         files = [f for f in os.listdir(RAW_DIR) if f.lower().endswith(SUPPORTED_EXTENSIONS)]
-        
         for filename in files:
             filepath = os.path.join(RAW_DIR, filename)
-            
-            # File stats for checking state
             try:
                 stat = os.stat(filepath)
                 mtime = stat.st_mtime
@@ -323,18 +480,14 @@ def monitor_loop():
             except OSError:
                 continue
                 
-            # Skip if file was already processed with same stats
             if filename in state:
                 if state[filename].get("size") == size and state[filename].get("mtime") == mtime:
                     continue
             
             logging.info(f"Detected new or modified file: {filename}")
-            
-            # Wait until Seafile finishes synchronization
             if not wait_for_file_to_stabilize(filepath):
                 continue
                 
-            # Re-read stats after stabilization
             try:
                 stat = os.stat(filepath)
                 mtime = stat.st_mtime
@@ -343,7 +496,6 @@ def monitor_loop():
                 continue
                 
             success = process_file(filepath)
-            
             if success:
                 state[filename] = {
                     "size": size,

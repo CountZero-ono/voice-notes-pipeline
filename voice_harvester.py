@@ -2,8 +2,10 @@
 """
 Voice Notes Harvester & Thought Conveyor
 Processes local multi-lingual voice notes on CPU, classifies and cleans them using a local LLM,
-deposits formatted notes in categorized subfolders inside the Obsidian Vault Inbox,
-and automatically pushes calendar events and tasks to a Radicale CalDAV server.
+deposits formatted notes in categorized subfolders inside the Obsidian Vault Inbox.
+If a note contains appointments/tasks, it sets 'status: pending' in the frontmatter.
+When a user approves a note by setting 'status: approved', it automatically pushes the
+finalized events and tasks to a Radicale CalDAV server and updates the status to 'synced'.
 """
 
 import os
@@ -189,8 +191,8 @@ def parse_categories_from_llm(llm_content):
         return ["life"]
     return unique_cats
 
-def parse_event_from_frontmatter(llm_content):
-    content = llm_content.strip()
+def parse_event_from_frontmatter(content):
+    content = content.strip()
     if not content.startswith("---"):
         return None
     parts = content.split("---", 2)
@@ -221,9 +223,9 @@ def parse_event_from_frontmatter(llm_content):
         return event_data
     return None
 
-def parse_tasks_from_markdown(llm_content):
+def parse_tasks_from_markdown(content):
     tasks = []
-    for line in llm_content.splitlines():
+    for line in content.splitlines():
         line = line.strip()
         if line.startswith("- [ ]"):
             title = line[5:].strip()
@@ -363,7 +365,6 @@ def write_to_inbox(original_filename, detected_lang, original_text, llm_content)
         if has_yaml:
             parts = llm_content.split("---", 2)
             if len(parts) >= 3:
-                # Read key-value frontmatter lines manually (avoiding PyYAML)
                 for line in parts[1].splitlines():
                     line = line.strip()
                     if ":" in line and not line.startswith("-"):
@@ -380,6 +381,10 @@ def write_to_inbox(original_filename, detected_lang, original_text, llm_content)
         if "tags" not in yaml_data:
             yaml_data["tags"] = ["voicenote", "inbox"]
             
+        # Add approval staging queue if it's an appointments note
+        if "appointments" in categories:
+            yaml_data["status"] = "pending"
+            
         siblings = [d["display_path"] for d in destinations if d != dest]
         if siblings:
             yaml_data["copies"] = siblings
@@ -387,14 +392,11 @@ def write_to_inbox(original_filename, detected_lang, original_text, llm_content)
         # Rebuild YAML block
         yaml_lines = ["---"]
         for k, v in yaml_data.items():
-            if k == "categories" or k == "copies":
+            if k in ("categories", "copies", "tags"):
                 yaml_lines.append(f"{k}:")
-                for item in (categories if k == "categories" else siblings):
+                list_items = categories if k == "categories" else (siblings if k == "copies" else ["voicenote", "inbox"])
+                for item in list_items:
                     yaml_lines.append(f"  - {item}")
-            elif k == "tags":
-                yaml_lines.append("tags:")
-                for tag in ["voicenote", "inbox"]:
-                    yaml_lines.append(f"  - {tag}")
             else:
                 yaml_lines.append(f"{k}: \"{v}\"")
         yaml_lines.append("---")
@@ -423,6 +425,88 @@ def write_to_inbox(original_filename, detected_lang, original_text, llm_content)
     logging.info(f"Saved note copies to {[d['display_path'] for d in destinations]} (Categories: {categories})")
     return [d["full_path"] for d in destinations]
 
+def check_and_sync_approved_notes():
+    """
+    Recursively scans the INBOX_DIR for any .md files.
+    If a file contains 'status: "approved"' in its frontmatter:
+      - Parses the calendar event.
+      - Parses the tasks.
+      - Pushes them to Radicale.
+      - Overwrites the file to change status from 'approved' to 'synced'.
+    """
+    if not os.path.exists(INBOX_DIR):
+        return
+        
+    for root, dirs, files in os.walk(INBOX_DIR):
+        for file in files:
+            if file.endswith(".md"):
+                filepath = os.path.join(root, file)
+                try:
+                    with open(filepath, "r", encoding="utf-8") as f:
+                        content = f.read()
+                except Exception as e:
+                    logging.error(f"Failed to read file {filepath} for status check: {e}")
+                    continue
+                    
+                # Parse frontmatter to check status
+                if not content.startswith("---"):
+                    continue
+                parts = content.split("---", 2)
+                if len(parts) < 3:
+                    continue
+                frontmatter = parts[1]
+                body = parts[2]
+                
+                is_approved = False
+                fm_lines = []
+                for line in frontmatter.splitlines():
+                    clean_line = line.strip()
+                    if clean_line.lower().startswith("status:"):
+                        val = clean_line.split(":", 1)[1].strip().replace('"', '').replace("'", "").lower()
+                        if val == "approved":
+                            is_approved = True
+                            # Change status to synced
+                            fm_lines.append('status: "synced"')
+                        else:
+                            fm_lines.append(line)
+                    else:
+                        fm_lines.append(line)
+                        
+                if is_approved:
+                    logging.info(f"Detected approved note for sync: {filepath}")
+                    
+                    # 1. Parse Event from Frontmatter
+                    event = parse_event_from_frontmatter(content)
+                    if event:
+                        logging.info(f"Syncing event '{event['title']}' to Radicale...")
+                        push_event_to_radicale(
+                            title=event.get("title"),
+                            date_str=event.get("date"),
+                            start_time=event.get("startTime"),
+                            end_time=event.get("endTime"),
+                            all_day=event.get("allDay", True)
+                        )
+                        
+                    # 2. Parse Tasks from Body
+                    tasks = parse_tasks_from_markdown(content)
+                    if tasks:
+                        logging.info(f"Syncing {len(tasks)} tasks to Radicale...")
+                        for task in tasks:
+                            push_task_to_radicale(
+                                title=task.get("title"),
+                                due_date=task.get("due_date")
+                            )
+                            
+                    # Update file with status: synced
+                    new_frontmatter = "\n".join(fm_lines)
+                    new_content = f"---{new_frontmatter}\n---{body}"
+                    try:
+                        with open(filepath, "w", encoding="utf-8") as f:
+                            f.write(new_content)
+                        logging.info(f"Successfully updated note status to 'synced' for: {filepath}")
+                    except Exception as e:
+                        logging.error(f"Failed to write updated status to {filepath}: {e}")
+
 def process_file(filepath):
     filename = os.path.basename(filepath)
     raw_transcript, lang, prob = transcribe_audio(filepath)
@@ -437,27 +521,6 @@ def process_file(filepath):
         return False
         
     write_to_inbox(filename, f"{lang} ({prob:.2%})", raw_transcript, llm_content)
-    
-    # Push to CalDAV if categorized as appointments
-    categories = parse_categories_from_llm(llm_content)
-    if "appointments" in categories:
-        logging.info("Appointments category detected. Syncing with CalDAV...")
-        event = parse_event_from_frontmatter(llm_content)
-        if event:
-            push_event_to_radicale(
-                title=event.get("title"),
-                date_str=event.get("date"),
-                start_time=event.get("startTime"),
-                end_time=event.get("endTime"),
-                all_day=event.get("allDay", True)
-            )
-        tasks = parse_tasks_from_markdown(llm_content)
-        for task in tasks:
-            push_task_to_radicale(
-                title=task.get("title"),
-                due_date=task.get("due_date")
-            )
-            
     return True
 
 def monitor_loop():
@@ -507,6 +570,8 @@ def monitor_loop():
             else:
                 logging.error(f"Failed processing file: {filename}. It will be retried.")
                 
+        # Run the approved notes check on every loop iteration
+        check_and_sync_approved_notes()
         time.sleep(5)
 
 if __name__ == "__main__":

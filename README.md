@@ -61,7 +61,8 @@ journalctl --user -u voice-notes-pipeline.service -f
 ## 4. How the Clean-up & Routing Works
 
 The LLM is prompted to perform three operations:
-1.  **Punctuation Conversion:** Translate spoken words (e.g. *"vergül"*, *"запятая"*, *"comma"*) to their respective symbols (`,`, `.`, `\n`).
+1.  **Paragraph Break Conversion:** Translate spoken paragraph cues (e.g. *"yeni sətir"*, *"новая строка"*, *"new line"*) into physical newlines (`\n`).
+
 2.  **Classification & Multi-Tagging:** Identify all categories that apply to a note and save them under the `categories` property in the frontmatter.
 3.  **Content Structuring:**
     *   `appointments`: Formats tasks (`- [ ] Task Description 📅 YYYY-MM-DD`) and full calendar events in the YAML frontmatter.

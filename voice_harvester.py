@@ -128,9 +128,21 @@ def clean_and_extract_llm(raw_text):
         today_str = datetime.now().strftime("%Y-%m-%d")
         categories = ["life"]
         raw_lower = raw_text.lower()
-        if any(w in raw_lower for w in ["appointment", "meeting", "task", "todo", "schedule", "calendar"]):
+        # Trilingual keywords for mock categorization
+        appointment_keywords = [
+            "appointment", "meeting", "task", "todo", "schedule", "calendar",
+            "встреча", "задача", "напомнить", "напоминание", "план", "календарь", "завтра", "записать",
+            "görüş", "tapşırıq", "xatırlatma", "təqvim", "sabah"
+        ]
+        technical_keywords = [
+            "code", "database", "ip", "config", "server", "cli",
+            "код", "база", "настройка", "конфиг", "сервер",
+            "kod", "baza", "server", "quraşdırma"
+        ]
+        
+        if any(w in raw_lower for w in appointment_keywords):
             categories.append("appointments")
-        if any(w in raw_lower for w in ["code", "database", "ip", "config", "server", "cli"]):
+        if any(w in raw_lower for w in technical_keywords):
             categories.append("technical")
         
         # Deduplicate and remove "life" if we have other categories

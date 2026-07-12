@@ -54,6 +54,9 @@ SUPPORTED_EXTENSIONS = (".mp3", ".wav", ".m4a")
 # Global Whisper Model Instance
 whisper_model = None
 
+# Dry run mode flag
+DRY_RUN = False
+
 def load_whisper():
     global whisper_model
     if whisper_model is None:
@@ -120,6 +123,51 @@ def transcribe_audio(filepath):
     return raw_transcript, info.language, info.language_probability
 
 def clean_and_extract_llm(raw_text):
+    if DRY_RUN:
+        logging.info(f"[DRY RUN] Simulating LLM request to {LLM_API_URL}...")
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        categories = ["life"]
+        raw_lower = raw_text.lower()
+        if any(w in raw_lower for w in ["appointment", "meeting", "task", "todo", "schedule", "calendar"]):
+            categories.append("appointments")
+        if any(w in raw_lower for w in ["code", "database", "ip", "config", "server", "cli"]):
+            categories.append("technical")
+        
+        # Deduplicate and remove "life" if we have other categories
+        if len(categories) > 1 and "life" in categories:
+            categories.remove("life")
+            
+        fm_lines = ["categories:"]
+        for cat in categories:
+            fm_lines.append(f"  - {cat}")
+            
+        if "appointments" in categories:
+            fm_lines.append('title: "Mock Event"')
+            fm_lines.append('allDay: false')
+            fm_lines.append(f'date: "{today_str}"')
+            fm_lines.append('startTime: "10:00"')
+            fm_lines.append('endTime: "11:00"')
+            
+        fm_str = "\n".join(fm_lines)
+        
+        body_parts = []
+        if "appointments" in categories or "life" in categories:
+            body_parts.append("# Cleaned Transcript")
+            body_parts.append(f"Cleaned: {raw_text}")
+            
+        if "appointments" in categories:
+            body_parts.append("\n# Extracted Tasks")
+            body_parts.append(f"- [ ] Mock task from transcript 📅 {today_str}")
+            
+        if "technical" in categories:
+            body_parts.append("\n# Technical Summary")
+            body_parts.append(f"Technical summary of: {raw_text}")
+            body_parts.append("\n# Key Knowledge & Facts")
+            body_parts.append("- Fact: Mock dry run tech fact.")
+            
+        mock_output = f"---\n{fm_str}\n---\n" + "\n".join(body_parts)
+        return mock_output
+
     if not os.path.exists(SYSTEM_PROMPT_PATH):
         logging.error(f"System prompt file not found at {SYSTEM_PROMPT_PATH}")
         return None
@@ -288,6 +336,10 @@ END:VEVENT
 END:VCALENDAR"""
 
     url = f"{RADICALE_CALENDAR_URL.rstrip('/')}/{uid}.ics"
+    if DRY_RUN:
+        logging.info(f"[DRY RUN] Would push event '{title}' to Radicale: {url}")
+        logging.info(f"[DRY RUN] Event payload:\n{ics_content}")
+        return True
     try:
         r = requests.put(url, data=ics_content.encode('utf-8'), headers={'Content-Type': 'text/calendar; charset=utf-8'}, auth=RADICALE_AUTH, timeout=10)
         r.raise_for_status()
@@ -327,6 +379,10 @@ END:VTODO
 END:VCALENDAR"""
 
     url = f"{RADICALE_TASKS_URL.rstrip('/')}/{uid}.ics"
+    if DRY_RUN:
+        logging.info(f"[DRY RUN] Would push task '{title}' (due: {due_date}) to Radicale: {url}")
+        logging.info(f"[DRY RUN] Task payload:\n{ics_content}")
+        return True
     try:
         r = requests.put(url, data=ics_content.encode('utf-8'), headers={'Content-Type': 'text/calendar; charset=utf-8'}, auth=RADICALE_AUTH, timeout=10)
         r.raise_for_status()
@@ -575,6 +631,15 @@ def monitor_loop():
         time.sleep(5)
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Voice Notes Harvester Daemon")
+    parser.add_argument("-d", "--dry-run", action="store_true", help="Run in dry-run mode (no external requests to LLM or CalDAV)")
+    args = parser.parse_args()
+    
+    if args.dry_run:
+        DRY_RUN = True
+        logging.info("Running in DRY RUN mode. External API and CalDAV requests will be mocked.")
+        
     try:
         monitor_loop()
     except KeyboardInterrupt:

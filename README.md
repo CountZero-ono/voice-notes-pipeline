@@ -11,6 +11,8 @@ All scripts, prompts, and logs are isolated inside this directory:
 *   **[voice_harvester.py](file:///home/fuad/OCProjects/voice-notes-pipeline/voice_harvester.py):** Main automated watcher and transcription coordinator.
 *   **[system_prompt.md](file:///home/fuad/OCProjects/voice-notes-pipeline/system_prompt.md):** Instruction template for the local LLM post-processing layer.
 *   **[harvester.log](file:///home/fuad/OCProjects/voice-notes-pipeline/harvester.log):** Background execution log file.
+*   **[backlog/](file:///home/fuad/OCProjects/voice-notes-pipeline/backlog/):** Staging queue for feature requests and fixes.
+*   **[.antigravity.md](file:///home/fuad/OCProjects/voice-notes-pipeline/.antigravity.md) & [AGENTS.md](file:///home/fuad/OCProjects/voice-notes-pipeline/AGENTS.md):** Workspace rules instructing AI agents to scan the backlog on startup.
 
 The script operates on the following Obsidian Vault folders:
 *   **Raw Input:** `[VoiceNotes/Raw/](file:///home/fuad/Seafile/Obsidian%20Vaults/VoiceNotes/Raw/)` (Incoming voice files)
@@ -55,6 +57,13 @@ systemctl --user enable voice-notes-pipeline.service
 systemctl --user status voice-notes-pipeline.service
 journalctl --user -u voice-notes-pipeline.service -f
 ```
+
+### Running Locally & Testing (Dry Run)
+You can test the daemon loop locally without hitting external services (like your local LLM or CalDAV server) by using the dry run flag:
+```bash
+python3 voice_harvester.py --dry-run
+```
+
 
 ---
 

@@ -12,19 +12,23 @@ class TestVoiceNotesPipelineE2E(unittest.TestCase):
         
         self.sandbox_raw = os.path.join(self.test_dir, "Raw")
         self.sandbox_inbox = os.path.join(self.test_dir, "Inbox")
+        self.sandbox_archive = os.path.join(self.test_dir, "Archive")
         self.sandbox_state = os.path.join(self.test_dir, "processed_files.json")
         
         os.makedirs(self.sandbox_raw, exist_ok=True)
         os.makedirs(self.sandbox_inbox, exist_ok=True)
+        os.makedirs(self.sandbox_archive, exist_ok=True)
         
         # Override voice_harvester module-level directories
         self.orig_raw = voice_harvester.RAW_DIR
         self.orig_inbox = voice_harvester.INBOX_DIR
+        self.orig_archive = voice_harvester.ARCHIVE_DIR
         self.orig_state = voice_harvester.STATE_FILE
         self.orig_dry_run = voice_harvester.DRY_RUN
         
         voice_harvester.RAW_DIR = self.sandbox_raw
         voice_harvester.INBOX_DIR = self.sandbox_inbox
+        voice_harvester.ARCHIVE_DIR = self.sandbox_archive
         voice_harvester.STATE_FILE = self.sandbox_state
         
         # Enable dry-run by default unless TEST_LIVE is set
@@ -43,6 +47,7 @@ class TestVoiceNotesPipelineE2E(unittest.TestCase):
         # Restore original settings
         voice_harvester.RAW_DIR = self.orig_raw
         voice_harvester.INBOX_DIR = self.orig_inbox
+        voice_harvester.ARCHIVE_DIR = self.orig_archive
         voice_harvester.STATE_FILE = self.orig_state
         voice_harvester.DRY_RUN = self.orig_dry_run
         
@@ -55,9 +60,14 @@ class TestVoiceNotesPipelineE2E(unittest.TestCase):
         shutil.copy(self.fixture_path, dest_audio)
         self.assertTrue(os.path.exists(dest_audio))
         
-        # 2. Process file (transcribe & cleanup)
+        # 2. Process file (transcribe & cleanup & archive)
         success = voice_harvester.process_file(dest_audio)
         self.assertTrue(success, "process_file failed")
+        
+        # Verify the raw audio file was moved to the archive directory
+        self.assertFalse(os.path.exists(dest_audio), "Raw audio file was not removed from Raw directory after processing")
+        archived_file = os.path.join(self.sandbox_archive, "test_recording.m4a")
+        self.assertTrue(os.path.exists(archived_file), "Processed audio file was not found in the Archive directory")
         
         # 3. Verify processed note routing and creation
         found_notes = []

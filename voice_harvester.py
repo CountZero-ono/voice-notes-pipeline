@@ -32,6 +32,7 @@ RAW_DIR = os.environ.get("VOICE_RAW_DIR", "/home/fuad/Seafile/Obsidian Vaults/Vo
 INBOX_DIR = os.environ.get("VOICE_INBOX_DIR", "/home/fuad/Seafile/Obsidian Vaults/VoiceNotes/Inbox/")
 STATE_FILE = os.environ.get("VOICE_STATE_FILE", "/home/fuad/Seafile/Obsidian Vaults/VoiceNotes/processed_files.json")
 SYSTEM_PROMPT_PATH = os.environ.get("VOICE_SYSTEM_PROMPT", "/home/fuad/OCProjects/voice-notes-pipeline/system_prompt.md")
+ARCHIVE_DIR = os.environ.get("VOICE_ARCHIVE_DIR", "/mnt/RAID5/VoiceNotesArchive/")
 
 # LLM Config
 LLM_API_URL = os.environ.get("LLM_API_URL", "http://127.0.0.1:1235/v1/chat/completions") # Port 1235 maps to Qwen 35B
@@ -575,6 +576,28 @@ def check_and_sync_approved_notes():
                     except Exception as e:
                         logging.error(f"Failed to write updated status to {filepath}: {e}")
 
+def archive_file(filepath):
+    import shutil
+    filename = os.path.basename(filepath)
+    try:
+        os.makedirs(ARCHIVE_DIR, exist_ok=True)
+    except Exception as e:
+        logging.error(f"Failed to create archive directory {ARCHIVE_DIR}: {e}")
+        return False
+        
+    archive_path = os.path.join(ARCHIVE_DIR, filename)
+    if os.path.exists(archive_path):
+        base, ext = os.path.splitext(filename)
+        archive_path = os.path.join(ARCHIVE_DIR, f"{base}_{int(time.time())}{ext}")
+        
+    try:
+        shutil.move(filepath, archive_path)
+        logging.info(f"Archived raw file: {filename} -> {archive_path}")
+        return True
+    except Exception as e:
+        logging.error(f"Failed to move file to archive: {e}")
+        return False
+
 def process_file(filepath):
     filename = os.path.basename(filepath)
     raw_transcript, lang, prob = transcribe_audio(filepath)
@@ -589,6 +612,9 @@ def process_file(filepath):
         return False
         
     write_to_inbox(filename, f"{lang} ({prob:.2%})", raw_transcript, llm_content)
+    
+    # Archive the processed raw recording
+    archive_file(filepath)
     return True
 
 def monitor_loop():

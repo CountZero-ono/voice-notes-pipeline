@@ -1,7 +1,7 @@
 ---
 title: "E2E Test of Recording-Transcription-Processing Pipeline"
-status: pending
-tags: ["#voice-notes-pipeline", "#status/pending"]
+status: completed
+tags: ["#voice-notes-pipeline", "#status/completed"]
 ---
 Implement an end-to-end (E2E) integration test to verify the entire voice notes pipeline. 
 The test should cover:

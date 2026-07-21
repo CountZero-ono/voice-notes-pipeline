@@ -1,84 +1,102 @@
 # Voice Notes Thought Conveyor (Мыслеконвейер)
 
-An automated, local, and cloud-free voice-to-text pipeline that monitors raw audio recordings synced via Seafile, transcribes them using `faster-whisper`, cleans up trilingual formatting commands via a local LLM, and populates task lists and calendar events in an Obsidian Vault.
+An automated, local, zero-cloud voice-to-thought pipeline that ingests voice messages over Signal, transcribes them using `faster-whisper`, structures trilingual text via local LLMs (Qwen 3.6 35B), auto-routes formatted notes into an Obsidian Vault (`Appointments`, `Technical`, `Life`), and provides zero-VPN interactive calendar management (`approve`, `reject`, `reschedule`) synced directly to Radicale CalDAV.
 
 ---
 
-## 1. Project Directory Structure
+## Architecture Overview
 
-All scripts, prompts, and logs are isolated inside this directory:
-
-*   **[voice_harvester.py](file:///home/fuad/OCProjects/voice-notes-pipeline/voice_harvester.py):** Main automated watcher and transcription coordinator.
-*   **[system_prompt.md](file:///home/fuad/OCProjects/voice-notes-pipeline/system_prompt.md):** Instruction template for the local LLM post-processing layer.
-*   **[harvester.log](file:///home/fuad/OCProjects/voice-notes-pipeline/harvester.log):** Background execution log file.
-*   **[backlog/](file:///home/fuad/OCProjects/voice-notes-pipeline/backlog/):** Staging queue for feature requests and fixes.
-*   **[.antigravity.md](file:///home/fuad/OCProjects/voice-notes-pipeline/.antigravity.md) & [AGENTS.md](file:///home/fuad/OCProjects/voice-notes-pipeline/AGENTS.md):** Workspace rules instructing AI agents to scan the backlog on startup.
-
-The script operates on the following Obsidian Vault folders:
-*   **Raw Input:** `[VoiceNotes/Raw/](file:///home/fuad/Seafile/Obsidian%20Vaults/VoiceNotes/Raw/)` (Incoming voice files)
-*   **Staging Inbox:** `[VoiceNotes/Inbox/](file:///home/fuad/Seafile/Obsidian%20Vaults/VoiceNotes/Inbox/)` (Review staging area with subfolders):
-    *   `[Inbox/Appointments/](file:///home/fuad/Seafile/Obsidian%20Vaults/VoiceNotes/Inbox/Appointments/)` — Tasks, deadlines, calendar events.
-    *   `[Inbox/Technical/](file:///home/fuad/Seafile/Obsidian%20Vaults/VoiceNotes/Inbox/Technical/)` — CLI logs, specs, codes, and structured facts.
-    *   `[Inbox/Life/](file:///home/fuad/Seafile/Obsidian%20Vaults/VoiceNotes/Inbox/Life/)` — General journals, life notes, fallbacks.
-*   **State Ledger:** `[processed_files.json](file:///home/fuad/Seafile/Obsidian%20Vaults/VoiceNotes/processed_files.json)` (Double-processing guard)
-
----
-
-## 2. Technical Stack
-
-*   **ASR Engine:** `faster-whisper` (Python implementation of CTranslate2) loading the `large-v3-turbo` model. Restricted to **CPU** with `int8` quantization to avoid VRAM exhaustion alongside large LLMs.
-*   **Post-Processor:** Local OpenAI-compatible API backend (defaults to `http://localhost:1235` running Qwen 3.6 35B).
-*   **Watcher Logic:** Loop-based polling with file-stabilization safety checks (ignores partially synced Seafile uploads).
-
----
-
-## 3. Deployment & Control
-
-The pipeline runs as a systemd user-level daemon.
-
-### Service File Location
-`[voice-notes-pipeline.service](file:///home/fuad/.config/systemd/user/voice-notes-pipeline.service)`
-
-### Manage Daemon Status
-```bash
-# Reload changes if you edit the service file
-systemctl --user daemon-reload
-
-# Start the harvester
-systemctl --user start voice-notes-pipeline.service
-
-# Stop the harvester
-systemctl --user stop voice-notes-pipeline.service
-
-# Enable auto-start on user login
-systemctl --user enable voice-notes-pipeline.service
-
-# View background logs
-systemctl --user status voice-notes-pipeline.service
-journalctl --user -u voice-notes-pipeline.service -f
+```
+[ Mobile / Signal App ] ──(Voice Note / Text)──► [ signal-cli-rest-api (Port 8080) ]
+                                                            │
+                                                            ▼ (WebSocket Stream)
+                                            [ signal_ingest.py Listener ]
+                                                            │
+                                                            ▼
+                                           [ faster-whisper ASR (CPU int8) ]
+                                                            │
+                                                            ▼
+                                           [ Qwen 3.6 35B (Port 1235) ]
+                                                            │
+                                                            ├──► Obsidian Vault Inbox (/Inbox)
+                                                            ├──► RAID5 Raw Archive (/VoiceNotesArchive)
+                                                            └──► Interactive Signal Alerts & Actions
+                                                                  (Approve / Reject / Reschedule)
+                                                                        │
+                                                                        ▼
+                                                              [ Radicale CalDAV Server ]
 ```
 
-### Running Locally & Testing (Dry Run)
-You can test the daemon loop locally without hitting external services (like your local LLM or CalDAV server) by using the dry run flag:
+---
+
+## Core Features
+
+- **Trilingual Speech-to-Text:** Converts English, Russian, and Azerbaijani voice notes automatically using `faster-whisper` (`large-v3-turbo` model on CPU).
+- **LLM Cleanup & Feature Extraction:** Removes spoken filler words (e.g. *"новая строка"*, *"yeni sətir"*), extracts YAML frontmatter, tasks (`- [ ]`), and structured markdown summaries.
+- **Priority Multi-Folder Routing:** Routes notes into Obsidian subfolders:
+  - `Inbox/Appointments/` — Deadlines, meetings, tasks (`status: pending`).
+  - `Inbox/Technical/` — Code snippets, CLI specs, project facts.
+  - `Inbox/Life/` — Daily logs, journals, general thoughts.
+- **Zero-VPN Mobile Control:** Receive instant 2-stage Signal receipts (`⏳ Processing...` ──► `✅ Staged!`), live Radicale CalDAV conflict checks (`🟢 Free` / `⚠️ Conflict`), and manage events directly in Signal text replies (`approve`, `reject`, `15:30`).
+- **Data Sovereignty:** 100% cloud-free runtime. Raw audio files move straight to `/mnt/RAID5/VoiceNotesArchive/`.
+
+---
+
+## Directory Structure
+
+* **[voice_harvester.py](file:///home/fuad/OCProjects/voice-notes-pipeline/voice_harvester.py):** Main transcription, categorization, and CalDAV sync engine.
+* **[signal_ingest.py](file:///home/fuad/OCProjects/voice-notes-pipeline/signal_ingest.py):** Real-time WebSocket Signal message listener and interactive command handler.
+* **[system_prompt.md](file:///home/fuad/OCProjects/voice-notes-pipeline/system_prompt.md):** Instruction template for the local LLM post-processing layer.
+* **[backlog/](file:///home/fuad/OCProjects/voice-notes-pipeline/backlog/):** Task queue for backlog automation.
+* **[tests/](file:///home/fuad/OCProjects/voice-notes-pipeline/tests/):** End-to-end integration test suite (`python3 -m unittest discover -s tests`).
+
+---
+
+## Deploying for Yourself or a Friend
+
+### Option A: The Sovereign Homelab Stack (Local AI + Radicale + Obsidian)
+
+1. **Start the Signal Gateway (Docker):**
+   ```bash
+   docker run -d \
+     --name signal-cli-rest-api \
+     --restart unless-stopped \
+     -p 8080:8080 \
+     -v ~/.local/share/signal-cli:/home/pb/signal-cli-config \
+     -e MODE=json-rpc \
+     bbernhard/signal-cli-rest-api:latest
+   ```
+2. **Link Your Signal Account:**
+   Open `http://localhost:8080/v1/qrcodelink?device_name=Hermes-SER7` in your browser and scan the QR code using **Signal (Settings $\rightarrow$ Linked Devices $\rightarrow$ Link New Device)**.
+
+3. **Configure Environment Variables:**
+   ```bash
+   export SIGNAL_PHONE_NUMBER="+1234567890"
+   export LLM_API_URL="http://127.0.0.1:1235/v1/chat/completions"
+   export RADICALE_CALENDAR_URL="http://192.168.1.30:5232/user/calendar/"
+   ```
+
+4. **Launch the Listener:**
+   ```bash
+   python3 signal_ingest.py
+   ```
+
+### Option B: The Cloud / Non-Technical Friend Setup (Gemini + Google Calendar)
+
+If deploying for a non-technical friend with a **Google AI Pro** subscription:
+- **STT + LLM:** Replace local Whisper and local Qwen with **Gemini API** (`gemini-2.0-flash` or `gemini-1.5-pro`). Feed raw audio files directly into Gemini in a single API call.
+- **Calendar & Notes:** Route appointments directly to **Google Calendar API** and save notes to **Google Drive / Google Docs / Notion / Obsidian (via iCloud/Google Drive)**.
+
+---
+
+## Testing & Maintenance
+
+### Run Dry-Run Mode (Offline Test)
 ```bash
 python3 voice_harvester.py --dry-run
 ```
 
-
----
-
-## 4. How the Clean-up & Routing Works
-
-The LLM is prompted to perform three operations:
-1.  **Paragraph Break Conversion:** Translate spoken paragraph cues (e.g. *"yeni sətir"*, *"новая строка"*, *"new line"*) into physical newlines (`\n`).
-
-2.  **Classification & Multi-Tagging:** Identify all categories that apply to a note and save them under the `categories` property in the frontmatter.
-3.  **Content Structuring:**
-    *   `appointments`: Formats tasks (`- [ ] Task Description 📅 YYYY-MM-DD`) and full calendar events in the YAML frontmatter.
-    *   `technical`: Synthesizes transcript into structured markdown sections, highlighting commands and parameters, and adding a `# Key Knowledge & Facts` summary.
-    *   `life`: Simple cleaned transcription logs.
-
-### Priority Routing Hierarchy
-The physical markdown file is routed into one subfolder based on the highest matched category:
-$$\text{Appointments (Priority 1)} \rightarrow \text{Technical (Priority 2)} \rightarrow \text{Life (Priority 3/Fallback)}$$
-This preserves single-source-of-truth file architecture while retaining all semantic category tags inside the frontmatter for Obsidian search/indexing.
+### Run End-to-End Test Suite
+```bash
+python3 -m unittest discover -s tests
+```

@@ -1,7 +1,7 @@
 ---
 title: "Configure Round Sync on Phone for WebDAV"
-status: pending
-tags: ["#voice-notes-pipeline", "#status/pending"]
+status: superseded
+tags: ["#voice-notes-pipeline", "#status/superseded"]
 ---
 Configure Round Sync on the Android phone to sync voice recordings with Seafile via WebDAV:
 1. Connect Round Sync to Seafile WebDAV (`https://seafile.yourdomain.com/seafdav`).

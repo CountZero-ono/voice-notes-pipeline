@@ -1,4 +1,4 @@
-# Voice Notes Thought Conveyor (Мыслеконвейер)
+# Voice Notes Thought Conveyor
 
 An automated, local, zero-cloud voice-to-thought pipeline that ingests voice messages over Signal, transcribes them using `faster-whisper`, structures trilingual text via local LLMs (Qwen 3.6 35B), auto-routes formatted notes into an Obsidian Vault (`Appointments`, `Technical`, `Life`), and provides zero-VPN interactive calendar management (`approve`, `reject`, `reschedule`) synced directly to Radicale CalDAV.
 

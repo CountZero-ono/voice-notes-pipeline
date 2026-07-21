@@ -405,6 +405,53 @@ END:VCALENDAR"""
         logging.error(f"Failed to push task to Radicale: {e}")
         return False
 
+GCAL_CREDENTIALS_FILE = os.environ.get("GCAL_CREDENTIALS", os.path.expanduser("~/OCProjects/voice-notes-pipeline/gcal_credentials.json"))
+
+def push_event_to_gcal(title, date_str, start_time=None, end_time=None, all_day=True):
+    if not os.path.exists(GCAL_CREDENTIALS_FILE):
+        logging.info(f"Google Calendar credentials file ({GCAL_CREDENTIALS_FILE}) not found. Skipping GCal push.")
+        return False
+        
+    if DRY_RUN:
+        logging.info(f"[DRY RUN] Would push event '{title}' ({date_str} {start_time}) to Google Calendar.")
+        return True
+        
+    try:
+        from google.oauth2 import service_account
+        from googleapiclient.discovery import build
+        
+        SCOPES = ['https://www.googleapis.com/auth/calendar']
+        creds = service_account.Credentials.from_service_account_file(GCAL_CREDENTIALS_FILE, scopes=SCOPES)
+        service = build('calendar', 'v3', credentials=creds)
+        
+        if all_day or not start_time:
+            start_body = {'date': date_str}
+            end_body = {'date': date_str}
+        else:
+            start_iso = f"{date_str}T{start_time}:00"
+            try:
+                h, m = start_time.split(":")
+                end_t = end_time if end_time else f"{int(h)+1:02d}:{m}"
+            except Exception:
+                end_t = start_time
+            end_iso = f"{date_str}T{end_t}:00"
+            start_body = {'dateTime': start_iso, 'timeZone': 'Asia/Baku'}
+            end_body = {'dateTime': end_iso, 'timeZone': 'Asia/Baku'}
+            
+        event_body = {
+            'summary': title,
+            'start': start_body,
+            'end': end_body,
+            'reminders': {'useDefault': True}
+        }
+        
+        res = service.events().insert(calendarId='primary', body=event_body).execute()
+        logging.info(f"Successfully pushed event '{title}' to Google Calendar: {res.get('htmlLink')}")
+        return True
+    except Exception as e:
+        logging.error(f"Failed to push event to Google Calendar: {e}")
+        return False
+
 def write_to_inbox(original_filename, detected_lang, original_text, llm_content):
     categories = parse_categories_from_llm(llm_content)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -549,6 +596,13 @@ def check_and_sync_approved_notes():
                     if event:
                         logging.info(f"Syncing event '{event['title']}' to Radicale...")
                         push_event_to_radicale(
+                            title=event.get("title"),
+                            date_str=event.get("date"),
+                            start_time=event.get("startTime"),
+                            end_time=event.get("endTime"),
+                            all_day=event.get("allDay", True)
+                        )
+                        push_event_to_gcal(
                             title=event.get("title"),
                             date_str=event.get("date"),
                             start_time=event.get("startTime"),

@@ -69,12 +69,14 @@ An automated, local, zero-cloud voice-to-thought pipeline that ingests voice mes
 2. **Link Your Signal Account:**
    Open `http://localhost:8080/v1/qrcodelink?device_name=Hermes-SER7` in your browser and scan the QR code using **Signal (Settings $\rightarrow$ Linked Devices $\rightarrow$ Link New Device)**.
 
-3. **Configure Environment Variables:**
+3. **Configure Environment Variables & Credentials:**
    ```bash
    export SIGNAL_PHONE_NUMBER="+1234567890"
    export LLM_API_URL="http://127.0.0.1:1235/v1/chat/completions"
    export RADICALE_CALENDAR_URL="http://192.168.1.30:5232/user/calendar/"
+   export GCAL_CREDENTIALS="/home/fuad/OCProjects/voice-notes-pipeline/gcal_credentials.json"
    ```
+   *(Optional: Place your Google Cloud Service Account `gcal_credentials.json` file in the repo directory for automatic Google Calendar & Tasks dual-sync).*
 
 4. **Launch the Listener:**
    ```bash

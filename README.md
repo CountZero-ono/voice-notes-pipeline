@@ -76,7 +76,7 @@ An automated, local, zero-cloud voice-to-thought pipeline that ingests voice mes
    export RADICALE_CALENDAR_URL="http://192.168.1.30:5232/user/calendar/"
    export GCAL_CREDENTIALS="/home/fuad/OCProjects/voice-notes-pipeline/gcal_credentials.json"
    ```
-   *(Optional: Place your Google Cloud Service Account `gcal_credentials.json` file in the repo directory for automatic Google Calendar & Tasks dual-sync).*
+   *(Optional: Place your Google Cloud Service Account `gcal_credentials.json` file in the repo directory for automatic Google Calendar events & Google Tasks dual-sync).*
 
 4. **Launch the Listener:**
    ```bash

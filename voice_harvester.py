@@ -452,6 +452,37 @@ def push_event_to_gcal(title, date_str, start_time=None, end_time=None, all_day=
         logging.error(f"Failed to push event to Google Calendar: {e}")
         return False
 
+def push_task_to_gtasks(title, due_date=None):
+    if not os.path.exists(GCAL_CREDENTIALS_FILE):
+        logging.info(f"Google credentials file ({GCAL_CREDENTIALS_FILE}) not found. Skipping Google Tasks push.")
+        return False
+        
+    if DRY_RUN:
+        logging.info(f"[DRY RUN] Would push task '{title}' (due: {due_date}) to Google Tasks.")
+        return True
+        
+    try:
+        from google.oauth2 import service_account
+        from googleapiclient.discovery import build
+        
+        SCOPES = ['https://www.googleapis.com/auth/tasks', 'https://www.googleapis.com/auth/calendar']
+        creds = service_account.Credentials.from_service_account_file(GCAL_CREDENTIALS_FILE, scopes=SCOPES)
+        service = build('tasks', 'v1', credentials=creds)
+        
+        task_body = {'title': title}
+        if due_date:
+            try:
+                task_body['due'] = f"{due_date}T09:00:00.000Z"
+            except Exception:
+                pass
+                
+        res = service.tasks().insert(tasklist='@default', body=task_body).execute()
+        logging.info(f"Successfully pushed task '{title}' to Google Tasks: ID '{res.get('id')}'")
+        return True
+    except Exception as e:
+        logging.error(f"Failed to push task to Google Tasks: {e}")
+        return False
+
 def write_to_inbox(original_filename, detected_lang, original_text, llm_content):
     categories = parse_categories_from_llm(llm_content)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -613,9 +644,13 @@ def check_and_sync_approved_notes():
                     # 2. Parse Tasks from Body
                     tasks = parse_tasks_from_markdown(content)
                     if tasks:
-                        logging.info(f"Syncing {len(tasks)} tasks to Radicale...")
+                        logging.info(f"Syncing {len(tasks)} tasks to Radicale & Google Tasks...")
                         for task in tasks:
                             push_task_to_radicale(
+                                title=task.get("title"),
+                                due_date=task.get("due_date")
+                            )
+                            push_task_to_gtasks(
                                 title=task.get("title"),
                                 due_date=task.get("due_date")
                             )

@@ -212,7 +212,23 @@ def process_signal_envelope(envelope):
     data = envelope.get("dataMessage", {})
     sync_data = envelope.get("syncMessage", {}).get("sentMessage", {})
     
-    sender = envelope.get("source") or envelope.get("sourceNumber") or SIGNAL_PHONE_NUMBER
+    source = envelope.get("source") or envelope.get("sourceNumber")
+    
+    # SENDER PRIVACY & SAFETY GUARD:
+    # Only process voice notes & commands sent BY Fuad (+994502214707) or Note to Self (syncMessage).
+    # Completely ignore all incoming messages/attachments from external friends!
+    is_self = (
+        sync_data or 
+        source == SIGNAL_PHONE_NUMBER or 
+        (source and source.replace(" ", "") == SIGNAL_PHONE_NUMBER.replace(" ", "")) or
+        source is None
+    )
+    
+    if not is_self:
+        logging.info(f"Ignoring message/attachment from external contact: {source}")
+        return
+
+    sender = SIGNAL_PHONE_NUMBER
     attachments = data.get("attachments", []) + sync_data.get("attachments", [])
     text_msg = data.get("message") or sync_data.get("message")
     
@@ -230,11 +246,10 @@ def process_signal_envelope(envelope):
                 any(t in content_type for t in ("audio", "ogg", "aac", "m4a", "wav", "mp4", "mpeg", "opus"))
                 or filename.endswith((".ogg", ".m4a", ".wav", ".aac", ".mp3", ".mp4", ".opus"))
                 or att.get("voiceNote") is True
-                or True
             )
             
             if is_audio:
-                logging.info(f"Processing audio attachment from {sender} (Type: '{content_type}', ID: '{att_id}')")
+                logging.info(f"Processing audio attachment from self (Type: '{content_type}', ID: '{att_id}')")
                 if sender:
                     send_signal_message(sender, "⏳ Voice note received! Transcribing & processing...")
                     

@@ -213,20 +213,31 @@ def process_signal_envelope(envelope):
     sync_data = envelope.get("syncMessage", {}).get("sentMessage", {})
     
     source = envelope.get("source") or envelope.get("sourceNumber")
+    sync_dest = sync_data.get("destination") or sync_data.get("destinationNumber")
+    data_dest = data.get("destination") or data.get("destinationNumber")
     
-    # SENDER PRIVACY & SAFETY GUARD:
-    # Only process voice notes & commands sent BY Fuad (+994502214707) or Note to Self (syncMessage).
-    # Completely ignore all incoming messages/attachments from external friends!
-    is_self = (
-        sync_data or 
-        source == SIGNAL_PHONE_NUMBER or 
-        (source and source.replace(" ", "") == SIGNAL_PHONE_NUMBER.replace(" ", "")) or
-        source is None
-    )
+    clean_my_num = SIGNAL_PHONE_NUMBER.replace(" ", "").replace("-", "")
     
-    if not is_self:
-        logging.info(f"Ignoring message/attachment from external contact: {source}")
-        return
+    # 1. If sent by Fuad to a friend (syncMessage destination is a friend's number), ignore!
+    if sync_dest:
+        clean_dest = sync_dest.replace(" ", "").replace("-", "")
+        if clean_dest != clean_my_num:
+            logging.info(f"Ignoring voice/text sent to friend ({sync_dest})")
+            return
+
+    # 2. If dataMessage destination is a friend's number, ignore!
+    if data_dest:
+        clean_data_dest = data_dest.replace(" ", "").replace("-", "")
+        if clean_data_dest != clean_my_num:
+            logging.info(f"Ignoring message targeted at friend ({data_dest})")
+            return
+
+    # 3. If received from an external contact (source is a friend's number), ignore!
+    if source:
+        clean_source = source.replace(" ", "").replace("-", "")
+        if clean_source != clean_my_num:
+            logging.info(f"Ignoring message received from external contact: {source}")
+            return
 
     sender = SIGNAL_PHONE_NUMBER
     attachments = data.get("attachments", []) + sync_data.get("attachments", [])

@@ -71,7 +71,7 @@ def download_attachment(attachment_id):
         logging.error(f"Failed to download attachment {attachment_id}: {e}")
         return None
 
-def check_radicale_conflicts(date_str, start_time_str):
+def check_calendar_conflicts(date_str, start_time_str):
     if not date_str or date_str == "Today":
         return "🟢 **Calendar Free**"
     url = voice_harvester.RADICALE_CALENDAR_URL
@@ -96,7 +96,7 @@ def check_radicale_conflicts(date_str, start_time_str):
                 except Exception:
                     pass
     except Exception as e:
-        logging.warning(f"Could not check Radicale conflicts: {e}")
+        logging.warning(f"Could not check calendar conflicts: {e}")
         
     if conflicts:
         return f"⚠️ **Calendar Conflict:** Existing entry on {date_str}: '{conflicts[0]}'"
@@ -181,7 +181,7 @@ def handle_text_command(sender, text_msg, quote=None):
             f.write(new_content)
             
         voice_harvester.check_and_sync_approved_notes()
-        send_signal_message(sender, f"✅ Approved! Synced '{title}' ({date_val} @ {time_val}) to calendar.")
+        send_signal_message(sender, f"✅ Approved! Synced '{title}' ({date_val} @ {time_val}) to Calendar & Tasks.")
         return
         
     # 2. REJECT COMMAND
@@ -217,7 +217,7 @@ def handle_text_command(sender, text_msg, quote=None):
             f.write(new_content)
             
         voice_harvester.check_and_sync_approved_notes()
-        send_signal_message(sender, f"📅 Rescheduled '{title}' to {new_time} ({date_val}) & synced to calendar!")
+        send_signal_message(sender, f"📅 Rescheduled '{title}' to {new_time} ({date_val}) & synced to Calendar & Tasks!")
         return
 
 def process_signal_envelope(envelope):
@@ -285,7 +285,7 @@ def process_signal_envelope(envelope):
                         if latest:
                             _, _, content = latest
                             title, date_val, time_val = parse_note_details(content)
-                            conflict_status = check_radicale_conflicts(date_val, time_val)
+                            conflict_status = check_calendar_conflicts(date_val, time_val)
                             reply = f"✅ Voice Note Processed & Staged in Obsidian!\n\n📌 Staged Appointment: {title}\n📅 Scheduled For: {date_val} @ {time_val}\n{conflict_status}\n\nReply with your decision:\n• 'approve' (or 'yes') -> Confirm & sync at {time_val}\n• 'reject' (or 'no') -> Cancel appointment\n• Or type any time (e.g. '16:00') -> Change start time & sync"
                         else:
                             reply = "✅ Voice note processed & staged in Obsidian Inbox!"

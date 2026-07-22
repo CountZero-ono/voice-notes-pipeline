@@ -406,6 +406,8 @@ END:VCALENDAR"""
         return False
 
 GCAL_CREDENTIALS_FILE = os.environ.get("GCAL_CREDENTIALS", os.path.expanduser("~/OCProjects/voice-notes-pipeline/gcal_credentials.json"))
+GCAL_CALENDAR_ID = os.environ.get("GCAL_CALENDAR_ID", "fuad.babaev@gmail.com")
+GTASKS_TOKEN_FILE = os.environ.get("GTASKS_TOKEN_FILE", os.path.expanduser("~/OCProjects/voice-notes-pipeline/token.json"))
 
 def push_event_to_gcal(title, date_str, start_time=None, end_time=None, all_day=True):
     if not os.path.exists(GCAL_CREDENTIALS_FILE):
@@ -413,7 +415,7 @@ def push_event_to_gcal(title, date_str, start_time=None, end_time=None, all_day=
         return False
         
     if DRY_RUN:
-        logging.info(f"[DRY RUN] Would push event '{title}' ({date_str} {start_time}) to Google Calendar.")
+        logging.info(f"[DRY RUN] Would push event '{title}' ({date_str} {start_time}) to Google Calendar '{GCAL_CALENDAR_ID}'.")
         return True
         
     try:
@@ -445,28 +447,46 @@ def push_event_to_gcal(title, date_str, start_time=None, end_time=None, all_day=
             'reminders': {'useDefault': True}
         }
         
-        res = service.events().insert(calendarId='primary', body=event_body).execute()
-        logging.info(f"Successfully pushed event '{title}' to Google Calendar: {res.get('htmlLink')}")
+        res = service.events().insert(calendarId=GCAL_CALENDAR_ID, body=event_body).execute()
+        logging.info(f"Successfully pushed event '{title}' to Google Calendar ({GCAL_CALENDAR_ID}): {res.get('htmlLink')}")
         return True
     except Exception as e:
         logging.error(f"Failed to push event to Google Calendar: {e}")
         return False
 
 def push_task_to_gtasks(title, due_date=None):
-    if not os.path.exists(GCAL_CREDENTIALS_FILE):
-        logging.info(f"Google credentials file ({GCAL_CREDENTIALS_FILE}) not found. Skipping Google Tasks push.")
-        return False
-        
     if DRY_RUN:
         logging.info(f"[DRY RUN] Would push task '{title}' (due: {due_date}) to Google Tasks.")
         return True
         
     try:
-        from google.oauth2 import service_account
         from googleapiclient.discovery import build
+        from google.oauth2.credentials import Credentials
+        from google.auth.transport.requests import Request
         
-        SCOPES = ['https://www.googleapis.com/auth/tasks', 'https://www.googleapis.com/auth/calendar']
-        creds = service_account.Credentials.from_service_account_file(GCAL_CREDENTIALS_FILE, scopes=SCOPES)
+        SCOPES = ['https://www.googleapis.com/auth/tasks']
+        creds = None
+        
+        if os.path.exists(GTASKS_TOKEN_FILE):
+            try:
+                creds = Credentials.from_authorized_user_file(GTASKS_TOKEN_FILE, SCOPES)
+                if creds and creds.expired and creds.refresh_token:
+                    creds.refresh(Request())
+                    with open(GTASKS_TOKEN_FILE, 'w') as token:
+                        token.write(creds.to_json())
+                    os.chmod(GTASKS_TOKEN_FILE, 0o600)
+            except Exception as e:
+                logging.warning(f"Failed to load/refresh Google Tasks token.json: {e}")
+                creds = None
+                
+        if not creds or not creds.valid:
+            if os.path.exists(GCAL_CREDENTIALS_FILE):
+                from google.oauth2 import service_account
+                creds = service_account.Credentials.from_service_account_file(GCAL_CREDENTIALS_FILE, scopes=SCOPES)
+            else:
+                logging.info("Neither Google Tasks token.json nor service account credentials file found. Skipping Google Tasks push.")
+                return False
+                
         service = build('tasks', 'v1', credentials=creds)
         
         task_body = {'title': title}

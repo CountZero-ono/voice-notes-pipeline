@@ -102,13 +102,11 @@ def check_radicale_conflicts(date_str, start_time_str):
         return f"⚠️ **Calendar Conflict:** Existing entry on {date_str}: '{conflicts[0]}'"
     return "🟢 **Calendar Free** (No conflicts found)"
 
-def get_latest_pending_appointment_note():
-    appts_dir = os.path.join(INBOX_DIR, "Appointments")
-    if not os.path.exists(appts_dir):
-        return None
-        
+def get_pending_appointment_notes():
+    if not os.path.exists(INBOX_DIR):
+        return []
     pending_notes = []
-    for root, dirs, files in os.walk(appts_dir):
+    for root, dirs, files in os.walk(INBOX_DIR):
         for file in files:
             if file.endswith(".md"):
                 full_path = os.path.join(root, file)
@@ -120,12 +118,26 @@ def get_latest_pending_appointment_note():
                         pending_notes.append((mtime, full_path, content))
                 except Exception:
                     pass
-                    
-    if not pending_notes:
+    pending_notes.sort(key=lambda x: x[0], reverse=True)
+    return pending_notes
+
+def get_target_pending_appointment_note(quote=None):
+    pending = get_pending_appointment_notes()
+    if not pending:
         return None
         
-    pending_notes.sort(key=lambda x: x[0], reverse=True)
-    return pending_notes[0]
+    if quote and isinstance(quote, dict):
+        quoted_text = quote.get("text", "") or ""
+        if quoted_text:
+            for mtime, path, content in pending:
+                title, _, _ = parse_note_details(content)
+                if title and title.lower() in quoted_text.lower():
+                    return (mtime, path, content)
+                if os.path.basename(path) in quoted_text:
+                    return (mtime, path, content)
+                    
+    # Fallback to latest
+    return pending[0]
 
 def parse_note_details(content):
     title = "Appointment"
@@ -150,16 +162,16 @@ def parse_note_details(content):
                         time_val = v
     return title, date_val, time_val
 
-def handle_text_command(sender, text_msg):
+def handle_text_command(sender, text_msg, quote=None):
     cmd = text_msg.strip().lower()
-    latest = get_latest_pending_appointment_note()
+    target = get_target_pending_appointment_note(quote=quote)
     
-    if not latest:
+    if not target:
         if any(w in cmd for w in ("approve", "yes", "reject", "no", "reschedule")):
             send_signal_message(sender, "ℹ️ No pending appointments found in Obsidian Inbox.")
         return
         
-    mtime, note_path, content = latest
+    mtime, note_path, content = target
     title, date_val, time_val = parse_note_details(content)
     
     # 1. APPROVE COMMAND
@@ -169,7 +181,7 @@ def handle_text_command(sender, text_msg):
             f.write(new_content)
             
         voice_harvester.check_and_sync_approved_notes()
-        send_signal_message(sender, f"✅ Approved! Synced '{title}' ({date_val} @ {time_val}) to Radicale calendar.")
+        send_signal_message(sender, f"✅ Approved! Synced '{title}' ({date_val} @ {time_val}) to calendar.")
         return
         
     # 2. REJECT COMMAND
@@ -205,7 +217,7 @@ def handle_text_command(sender, text_msg):
             f.write(new_content)
             
         voice_harvester.check_and_sync_approved_notes()
-        send_signal_message(sender, f"📅 Rescheduled '{title}' to {new_time} ({date_val}) & synced to Radicale calendar!")
+        send_signal_message(sender, f"📅 Rescheduled '{title}' to {new_time} ({date_val}) & synced to calendar!")
         return
 
 def process_signal_envelope(envelope):
@@ -242,6 +254,7 @@ def process_signal_envelope(envelope):
     sender = SIGNAL_PHONE_NUMBER
     attachments = data.get("attachments", []) + sync_data.get("attachments", [])
     text_msg = data.get("message") or sync_data.get("message")
+    quote = data.get("quote") or sync_data.get("quote")
     
     # Process Audio Attachments
     if attachments:
@@ -268,7 +281,7 @@ def process_signal_envelope(envelope):
                 if filepath:
                     success = voice_harvester.process_file(filepath)
                     if success:
-                        latest = get_latest_pending_appointment_note()
+                        latest = get_target_pending_appointment_note()
                         if latest:
                             _, _, content = latest
                             title, date_val, time_val = parse_note_details(content)
@@ -284,8 +297,8 @@ def process_signal_envelope(envelope):
 
     # Process Text Interactive Commands
     if text_msg and not attachments:
-        logging.info(f"Received Signal text command from {sender}: '{text_msg}'")
-        handle_text_command(sender, text_msg)
+        logging.info(f"Received Signal text command from {sender}: '{text_msg}' (quote: {quote})")
+        handle_text_command(sender, text_msg, quote=quote)
 
 async def listen_signal_websocket():
     ws_url = f"ws://127.0.0.1:8080/v1/receive/{SIGNAL_PHONE_NUMBER}"

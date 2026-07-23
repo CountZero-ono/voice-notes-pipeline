@@ -41,6 +41,40 @@ PRIMARY_LLM_URL = os.environ.get("PRIMARY_LLM_URL", "http://192.168.1.112:1235/v
 FALLBACK_LLM_URL = os.environ.get("FALLBACK_LLM_URL", "http://192.168.1.27:8081/v1/chat/completions") # virtsrv2 Granite 2B
 LLM_MODEL = os.environ.get("LLM_MODEL", "qwen")
 
+# Seafile Cloud Sync Config
+SEAFILE_URL = os.environ.get("SEAFILE_URL", "https://seafile.eyenology.net")
+SEAFILE_TOKEN = os.environ.get("SEAFILE_TOKEN", "f3e8426ae8eb1f9bc44924516dab00172f0bdbcc")
+SEAFILE_REPO_ID = os.environ.get("SEAFILE_REPO_ID", "fbe02384-2e6d-4cd1-b013-a596673dab90")
+
+def upload_to_seafile(local_filepath, display_path="Inbox/Life/Note.md"):
+    if not SEAFILE_TOKEN:
+        return False
+    try:
+        filename = os.path.basename(local_filepath)
+        parent_dir = f"/VoiceNotes/{os.path.dirname(display_path)}"
+        headers = {'Authorization': f'Token {SEAFILE_TOKEN}'}
+        
+        link_url = f"{SEAFILE_URL}/api2/repos/{SEAFILE_REPO_ID}/upload-link/?p={parent_dir}"
+        r = requests.get(link_url, headers=headers, timeout=10)
+        if r.status_code != 200:
+            logging.warning(f"Failed to get Seafile upload link: {r.status_code} {r.text}")
+            return False
+        upload_url = r.json()
+        
+        with open(local_filepath, "rb") as f:
+            files = {'file': (filename, f, 'text/markdown')}
+            data = {'parent_dir': parent_dir, 'replace': 1}
+            res = requests.post(upload_url, headers=headers, files=files, data=data, timeout=30)
+            if res.status_code == 200:
+                logging.info(f"Successfully uploaded {filename} directly to Seafile cloud ({parent_dir}).")
+                return True
+            else:
+                logging.warning(f"Seafile upload failed: {res.status_code} {res.text}")
+                return False
+    except Exception as e:
+        logging.warning(f"Error uploading to Seafile: {e}")
+        return False
+
 def get_active_llm_endpoint():
     """
     Pings the primary SER7 LLM endpoint.
@@ -630,6 +664,7 @@ def write_to_inbox(original_filename, detected_lang, original_text, llm_content)
         
         with open(dest["full_path"], "w", encoding="utf-8") as f:
             f.write(note_content)
+        upload_to_seafile(dest["full_path"], dest["display_path"])
             
     logging.info(f"Saved note copies to {[d['display_path'] for d in destinations]} (Categories: {categories})")
     return [d["full_path"] for d in destinations]

@@ -204,11 +204,29 @@ def clean_and_extract_llm(raw_text):
         mock_output = f"---\n{fm_str}\n---\n" + "\n".join(body_parts)
         return mock_output
 
-    if not os.path.exists(SYSTEM_PROMPT_PATH):
-        logging.error(f"System prompt file not found at {SYSTEM_PROMPT_PATH}")
-        return None
-    with open(SYSTEM_PROMPT_PATH, "r", encoding="utf-8") as f:
-        system_prompt = f.read()
+    active_url, engine_name = get_active_llm_endpoint()
+    
+    if active_url == FALLBACK_LLM_URL:
+        system_prompt = (
+            "You are a voice note processor. Extract action items or appointments from raw text.\n"
+            "Return ONLY valid JSON with this exact structure:\n"
+            "{\n"
+            '  "summary": "Brief summary of text",\n'
+            '  "category": "appointments|life|work",\n'
+            '  "tasks": ["task summary"],\n'
+            '  "appointment": {"title": "Title", "date": "YYYY-MM-DD", "startTime": "HH:MM"}\n'
+            "}\n"
+            "If no appointment, set appointment to null. If no task, set tasks to []. Output raw JSON only."
+        )
+        max_tokens_val = 150
+    else:
+        if not os.path.exists(SYSTEM_PROMPT_PATH):
+            logging.error(f"System prompt file not found at {SYSTEM_PROMPT_PATH}")
+            return None
+        with open(SYSTEM_PROMPT_PATH, "r", encoding="utf-8") as f:
+            system_prompt = f.read()
+        max_tokens_val = 512
+
     today_str = datetime.now().strftime("%Y-%m-%d")
     messages = [
         {"role": "system", "content": system_prompt},
@@ -219,9 +237,9 @@ def clean_and_extract_llm(raw_text):
         "model": LLM_MODEL,
         "messages": messages,
         "temperature": 0.1,
+        "max_tokens": max_tokens_val,
         "stream": False
     }
-    active_url, engine_name = get_active_llm_endpoint()
     logging.info(f"Sending transcript to local LLM ({engine_name}) at {active_url}...")
     try:
         response = requests.post(active_url, headers=headers, json=payload, timeout=120)

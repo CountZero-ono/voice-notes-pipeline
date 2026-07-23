@@ -19,12 +19,13 @@ import websockets
 import voice_harvester
 
 # Configure Logging
+LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "harvester.log")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] [SIGNAL-INGEST] %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler(os.path.expanduser("~/OCProjects/voice-notes-pipeline/harvester.log"))
+        logging.FileHandler(LOG_FILE)
     ]
 )
 

@@ -18,12 +18,13 @@ import requests
 import uuid
 
 # Configure Logging
+LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "harvester.log")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler(os.path.expanduser("~/OCProjects/voice-notes-pipeline/harvester.log"))
+        logging.FileHandler(LOG_FILE)
     ]
 )
 
@@ -35,8 +36,28 @@ SYSTEM_PROMPT_PATH = os.environ.get("VOICE_SYSTEM_PROMPT", "/home/fuad/OCProject
 ARCHIVE_DIR = os.environ.get("VOICE_ARCHIVE_DIR", "/mnt/RAID5/VoiceNotesArchive/")
 
 # LLM Config
-LLM_API_URL = os.environ.get("LLM_API_URL", "http://127.0.0.1:1235/v1/chat/completions") # Port 1235 maps to Qwen 35B
+PRIMARY_LLM_URL = os.environ.get("PRIMARY_LLM_URL", "http://192.168.1.112:1235/v1/chat/completions") # SER7 Qwen 35B
+FALLBACK_LLM_URL = os.environ.get("FALLBACK_LLM_URL", "http://192.168.1.27:8081/v1/chat/completions") # virtsrv2 Granite 2B
 LLM_MODEL = os.environ.get("LLM_MODEL", "qwen")
+
+def get_active_llm_endpoint():
+    """
+    Pings the primary SER7 LLM endpoint.
+    If online, returns (PRIMARY_LLM_URL, "SER7 Primary (Qwen 35B)").
+    If offline or unreachable, returns (FALLBACK_LLM_URL, "virtsrv2 Fallback (Granite 2B)").
+    """
+    ping_url = PRIMARY_LLM_URL.replace("/chat/completions", "/models")
+    try:
+        r = requests.get(ping_url, timeout=1.0)
+        if r.status_code == 200:
+            logging.info(f"Primary LLM engine online at {PRIMARY_LLM_URL}")
+            return PRIMARY_LLM_URL, "SER7 Primary (Qwen 35B)"
+    except Exception:
+        pass
+        
+    logging.info(f"Primary LLM unavailable. Falling back to {FALLBACK_LLM_URL}")
+    return FALLBACK_LLM_URL, "virtsrv2 Fallback (Granite 2B)"
+
 
 # Whisper Config
 WHISPER_MODEL_NAME = os.environ.get("WHISPER_MODEL", "large-v3-turbo")
@@ -125,7 +146,8 @@ def transcribe_audio(filepath):
 
 def clean_and_extract_llm(raw_text):
     if DRY_RUN:
-        logging.info(f"[DRY RUN] Simulating LLM request to {LLM_API_URL}...")
+        active_url, engine_name = get_active_llm_endpoint()
+        logging.info(f"[DRY RUN] Simulating LLM request to {active_url} ({engine_name})...")
         today_str = datetime.now().strftime("%Y-%m-%d")
         categories = ["life"]
         raw_lower = raw_text.lower()
@@ -198,16 +220,17 @@ def clean_and_extract_llm(raw_text):
         "temperature": 0.1,
         "stream": False
     }
-    logging.info(f"Sending transcript to local LLM at {LLM_API_URL}...")
+    active_url, engine_name = get_active_llm_endpoint()
+    logging.info(f"Sending transcript to local LLM ({engine_name}) at {active_url}...")
     try:
-        response = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=120)
+        response = requests.post(active_url, headers=headers, json=payload, timeout=120)
         response.raise_for_status()
         res_json = response.json()
         llm_output = res_json['choices'][0]['message']['content']
-        logging.info("LLM response received successfully.")
+        logging.info(f"LLM response received successfully from {engine_name}.")
         return llm_output
     except Exception as e:
-        logging.error(f"Failed to communicate with local LLM: {e}")
+        logging.error(f"Failed to communicate with LLM ({engine_name}): {e}")
         return None
 
 def parse_categories_from_llm(llm_content):

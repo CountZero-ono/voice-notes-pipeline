@@ -36,62 +36,8 @@ DEFAULT_SYSTEM_PROMPT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 SYSTEM_PROMPT_PATH = os.environ.get("VOICE_SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT)
 ARCHIVE_DIR = os.environ.get("VOICE_ARCHIVE_DIR", "/mnt/RAID5/VoiceNotesArchive/")
 
-# LLM Config
-PRIMARY_LLM_URL = os.environ.get("PRIMARY_LLM_URL", "http://192.168.1.112:1235/v1/chat/completions") # SER7 Qwen 35B
-FALLBACK_LLM_URL = os.environ.get("FALLBACK_LLM_URL", "http://192.168.1.27:8081/v1/chat/completions") # virtsrv2 Granite 2B
+LLM_API_URL = os.environ.get("LLM_API_URL", "http://127.0.0.1:1235/v1/chat/completions") # Port 1235 maps to Qwen 35B
 LLM_MODEL = os.environ.get("LLM_MODEL", "qwen")
-
-# Seafile Cloud Sync Config
-SEAFILE_URL = os.environ.get("SEAFILE_URL", "https://seafile.eyenology.net")
-SEAFILE_TOKEN = os.environ.get("SEAFILE_TOKEN", "f3e8426ae8eb1f9bc44924516dab00172f0bdbcc")
-SEAFILE_REPO_ID = os.environ.get("SEAFILE_REPO_ID", "fbe02384-2e6d-4cd1-b013-a596673dab90")
-
-def upload_to_seafile(local_filepath, display_path="Inbox/Life/Note.md"):
-    if not SEAFILE_TOKEN:
-        return False
-    try:
-        filename = os.path.basename(local_filepath)
-        parent_dir = f"/VoiceNotes/{os.path.dirname(display_path)}"
-        headers = {'Authorization': f'Token {SEAFILE_TOKEN}'}
-        
-        link_url = f"{SEAFILE_URL}/api2/repos/{SEAFILE_REPO_ID}/upload-link/?p={parent_dir}"
-        r = requests.get(link_url, headers=headers, timeout=10)
-        if r.status_code != 200:
-            logging.warning(f"Failed to get Seafile upload link: {r.status_code} {r.text}")
-            return False
-        upload_url = r.json()
-        
-        with open(local_filepath, "rb") as f:
-            files = {'file': (filename, f, 'text/markdown')}
-            data = {'parent_dir': parent_dir, 'replace': 1}
-            res = requests.post(upload_url, headers=headers, files=files, data=data, timeout=30)
-            if res.status_code == 200:
-                logging.info(f"Successfully uploaded {filename} directly to Seafile cloud ({parent_dir}).")
-                return True
-            else:
-                logging.warning(f"Seafile upload failed: {res.status_code} {res.text}")
-                return False
-    except Exception as e:
-        logging.warning(f"Error uploading to Seafile: {e}")
-        return False
-
-def get_active_llm_endpoint():
-    """
-    Pings the primary SER7 LLM endpoint.
-    If online, returns (PRIMARY_LLM_URL, "SER7 Primary (Qwen 35B)").
-    If offline or unreachable, returns (FALLBACK_LLM_URL, "virtsrv2 Fallback (Granite 2B)").
-    """
-    ping_url = PRIMARY_LLM_URL.replace("/chat/completions", "/models")
-    try:
-        r = requests.get(ping_url, timeout=1.0)
-        if r.status_code == 200:
-            logging.info(f"Primary LLM engine online at {PRIMARY_LLM_URL}")
-            return PRIMARY_LLM_URL, "SER7 Primary (Qwen 35B)"
-    except Exception:
-        pass
-        
-    logging.info(f"Primary LLM unavailable. Falling back to {FALLBACK_LLM_URL}")
-    return FALLBACK_LLM_URL, "virtsrv2 Fallback (Granite 2B)"
 
 
 # Whisper Config
@@ -238,28 +184,11 @@ def clean_and_extract_llm(raw_text):
         mock_output = f"---\n{fm_str}\n---\n" + "\n".join(body_parts)
         return mock_output
 
-    active_url, engine_name = get_active_llm_endpoint()
-    
-    if active_url == FALLBACK_LLM_URL:
-        system_prompt = (
-            "You are a voice note processor. Extract action items or appointments from raw text.\n"
-            "Return ONLY valid JSON with this exact structure:\n"
-            "{\n"
-            '  "summary": "Brief summary of text",\n'
-            '  "category": "appointments|life|work",\n'
-            '  "tasks": ["task summary"],\n'
-            '  "appointment": {"title": "Title", "date": "YYYY-MM-DD", "startTime": "HH:MM"}\n'
-            "}\n"
-            "If no appointment, set appointment to null. If no task, set tasks to []. Output raw JSON only."
-        )
-        max_tokens_val = 150
-    else:
-        if not os.path.exists(SYSTEM_PROMPT_PATH):
-            logging.error(f"System prompt file not found at {SYSTEM_PROMPT_PATH}")
-            return None
-        with open(SYSTEM_PROMPT_PATH, "r", encoding="utf-8") as f:
-            system_prompt = f.read()
-        max_tokens_val = 512
+    if not os.path.exists(SYSTEM_PROMPT_PATH):
+        logging.error(f"System prompt file not found at {SYSTEM_PROMPT_PATH}")
+        return None
+    with open(SYSTEM_PROMPT_PATH, "r", encoding="utf-8") as f:
+        system_prompt = f.read()
 
     today_str = datetime.now().strftime("%Y-%m-%d")
     messages = [
@@ -271,19 +200,18 @@ def clean_and_extract_llm(raw_text):
         "model": LLM_MODEL,
         "messages": messages,
         "temperature": 0.1,
-        "max_tokens": max_tokens_val,
         "stream": False
     }
-    logging.info(f"Sending transcript to local LLM ({engine_name}) at {active_url}...")
+    logging.info(f"Sending transcript to local LLM at {LLM_API_URL}...")
     try:
-        response = requests.post(active_url, headers=headers, json=payload, timeout=120)
+        response = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=120)
         response.raise_for_status()
         res_json = response.json()
         llm_output = res_json['choices'][0]['message']['content']
-        logging.info(f"LLM response received successfully from {engine_name}.")
+        logging.info("LLM response received successfully.")
         return llm_output
     except Exception as e:
-        logging.error(f"Failed to communicate with LLM ({engine_name}): {e}")
+        logging.error(f"Failed to communicate with local LLM: {e}")
         return None
 
 def parse_categories_from_llm(llm_content):

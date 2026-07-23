@@ -39,6 +39,40 @@ ARCHIVE_DIR = os.environ.get("VOICE_ARCHIVE_DIR", "/mnt/RAID5/VoiceNotesArchive/
 LLM_API_URL = os.environ.get("LLM_API_URL", "http://127.0.0.1:1235/v1/chat/completions") # Port 1235 maps to Qwen 35B
 LLM_MODEL = os.environ.get("LLM_MODEL", "qwen")
 
+# Seafile Cloud Sync Config
+SEAFILE_URL = os.environ.get("SEAFILE_URL", "https://seafile.eyenology.net")
+SEAFILE_TOKEN = os.environ.get("SEAFILE_TOKEN", "f3e8426ae8eb1f9bc44924516dab00172f0bdbcc")
+SEAFILE_REPO_ID = os.environ.get("SEAFILE_REPO_ID", "fbe02384-2e6d-4cd1-b013-a596673dab90")
+
+def upload_to_seafile(local_filepath, display_path="Inbox/Life/Note.md"):
+    if not SEAFILE_TOKEN:
+        return False
+    try:
+        filename = os.path.basename(local_filepath)
+        parent_dir = f"/VoiceNotes/{os.path.dirname(display_path)}"
+        headers = {'Authorization': f'Token {SEAFILE_TOKEN}'}
+        
+        link_url = f"{SEAFILE_URL}/api2/repos/{SEAFILE_REPO_ID}/upload-link/?p={parent_dir}"
+        r = requests.get(link_url, headers=headers, timeout=10)
+        if r.status_code != 200:
+            logging.warning(f"Failed to get Seafile upload link: {r.status_code} {r.text}")
+            return False
+        upload_url = r.json()
+        
+        with open(local_filepath, "rb") as f:
+            files = {'file': (filename, f, 'text/markdown')}
+            data = {'parent_dir': parent_dir, 'replace': 1}
+            res = requests.post(upload_url, headers=headers, files=files, data=data, timeout=30)
+            if res.status_code == 200:
+                logging.info(f"Successfully uploaded {filename} directly to Seafile cloud ({parent_dir}).")
+                return True
+            else:
+                logging.warning(f"Seafile upload failed: {res.status_code} {res.text}")
+                return False
+    except Exception as e:
+        logging.warning(f"Error uploading to Seafile: {e}")
+        return False
+
 
 # Whisper Config
 WHISPER_MODEL_NAME = os.environ.get("WHISPER_MODEL", "large-v3-turbo")

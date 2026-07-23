@@ -32,7 +32,8 @@ logging.basicConfig(
 RAW_DIR = os.environ.get("VOICE_RAW_DIR", "/home/fuad/Seafile/Obsidian Vaults/VoiceNotes/Raw/")
 INBOX_DIR = os.environ.get("VOICE_INBOX_DIR", "/home/fuad/Seafile/Obsidian Vaults/VoiceNotes/Inbox/")
 STATE_FILE = os.environ.get("VOICE_STATE_FILE", "/home/fuad/Seafile/Obsidian Vaults/VoiceNotes/processed_files.json")
-SYSTEM_PROMPT_PATH = os.environ.get("VOICE_SYSTEM_PROMPT", "/home/fuad/OCProjects/voice-notes-pipeline/system_prompt.md")
+DEFAULT_SYSTEM_PROMPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "system_prompt.md")
+SYSTEM_PROMPT_PATH = os.environ.get("VOICE_SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT)
 ARCHIVE_DIR = os.environ.get("VOICE_ARCHIVE_DIR", "/mnt/RAID5/VoiceNotesArchive/")
 
 # LLM Config

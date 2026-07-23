@@ -127,8 +127,7 @@ def transcribe_audio(filepath):
 
 def clean_and_extract_llm(raw_text):
     if DRY_RUN:
-        active_url, engine_name = get_active_llm_endpoint()
-        logging.info(f"[DRY RUN] Simulating LLM request to {active_url} ({engine_name})...")
+        logging.info(f"[DRY RUN] Simulating LLM request to {LLM_API_URL}...")
         today_str = datetime.now().strftime("%Y-%m-%d")
         categories = ["life"]
         raw_lower = raw_text.lower()

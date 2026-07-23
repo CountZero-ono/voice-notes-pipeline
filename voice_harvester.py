@@ -481,9 +481,12 @@ END:VCALENDAR"""
         logging.error(f"Failed to push task to Radicale: {e}")
         return False
 
-GCAL_CREDENTIALS_FILE = os.environ.get("GCAL_CREDENTIALS", os.path.expanduser("~/OCProjects/voice-notes-pipeline/gcal_credentials.json"))
+DEFAULT_GCAL_CREDS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gcal_credentials.json")
+DEFAULT_GTASKS_TOKEN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "token.json")
+
+GCAL_CREDENTIALS_FILE = os.environ.get("GCAL_CREDENTIALS", DEFAULT_GCAL_CREDS)
 GCAL_CALENDAR_ID = os.environ.get("GCAL_CALENDAR_ID", "fuad.babaev@gmail.com")
-GTASKS_TOKEN_FILE = os.environ.get("GTASKS_TOKEN_FILE", os.path.expanduser("~/OCProjects/voice-notes-pipeline/token.json"))
+GTASKS_TOKEN_FILE = os.environ.get("GTASKS_TOKEN_FILE", DEFAULT_GTASKS_TOKEN)
 
 def push_event_to_gcal(title, date_str, start_time=None, end_time=None, all_day=True):
     if not os.path.exists(GCAL_CREDENTIALS_FILE):

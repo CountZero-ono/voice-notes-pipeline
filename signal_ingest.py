@@ -16,6 +16,7 @@ import logging
 import asyncio
 import requests
 import websockets
+import subprocess
 import voice_harvester
 
 # Configure Logging
@@ -34,27 +35,178 @@ SIGNAL_PHONE_NUMBER = os.environ.get("SIGNAL_PHONE_NUMBER", "+994502214707")
 STAGING_DIR = os.environ.get("VOICE_STAGING_DIR", "/tmp/signal_voice_staging/")
 INBOX_DIR = os.environ.get("VOICE_INBOX_DIR", "/home/fuad/Seafile/Obsidian Vaults/VoiceNotes/Inbox/")
 
+# Qwen LLM Signal Chat Configuration
+QWEN_API_URL = os.environ.get("QWEN_API_URL", "http://127.0.0.1:1235/v1/chat/completions")
+QWEN_MODEL = os.environ.get("QWEN_MODEL", "qwen3.6-35b-a3b-mtp@iq3_s")
+QWEN_SYSTEM_PROMPT = os.environ.get(
+    "QWEN_SYSTEM_PROMPT",
+    "You are Qwen, a helpful, direct, intelligent Gen-X AI assistant connected via Signal chat. "
+    "Keep responses concise and well-formatted in markdown."
+)
+QWEN_SIGNAL_GROUP_ID = os.environ.get("QWEN_SIGNAL_GROUP_ID", "")
+QWEN_HISTORY_FILE = os.path.join(STAGING_DIR, "qwen_signal_history.json")
+MAX_HISTORY_TURNS = 15
+
 def ensure_staging_dir():
     os.makedirs(STAGING_DIR, exist_ok=True)
 
-def send_signal_message(recipient, message):
+import base64
+
+def format_signal_group_id(gid):
+    if not gid:
+        return ""
+    if gid.startswith("group."):
+        gid = gid[6:]
+    # Base64 encode the internal group_id bytes
+    b64_gid = base64.b64encode(gid.encode('utf-8')).decode('utf-8')
+    return f"group.{b64_gid}"
+
+def send_signal_message(recipient, message, group_id=None):
     if not SIGNAL_PHONE_NUMBER:
         logging.warning("SIGNAL_PHONE_NUMBER not set. Skipping response dispatch.")
         return False
     url = f"{SIGNAL_API_URL.rstrip('/')}/v2/send"
+    
+    if group_id:
+        target = format_signal_group_id(group_id)
+        recipients_list = [target]
+    elif recipient:
+        recipients_list = [recipient]
+    else:
+        logging.error("Neither recipient nor group_id provided for Signal message.")
+        return False
+
     payload = {
         "number": SIGNAL_PHONE_NUMBER,
-        "recipients": [recipient],
+        "recipients": recipients_list,
         "message": message
     }
+
     try:
-        r = requests.post(url, json=payload, timeout=10)
+        r = requests.post(url, json=payload, timeout=15)
         r.raise_for_status()
-        logging.info(f"Sent Signal response to {recipient}")
+        logging.info(f"Sent Signal response (target={recipients_list[0]})")
         return True
     except Exception as e:
         logging.error(f"Failed to send Signal message: {e}")
         return False
+
+def send_split_signal_message(recipient, text, group_id=None, max_length=3000):
+    if len(text) <= max_length:
+        send_signal_message(recipient, text, group_id=group_id)
+        return
+    
+    lines = text.splitlines(keepends=True)
+    chunk = ""
+    for line in lines:
+        if len(chunk) + len(line) > max_length:
+            send_signal_message(recipient, chunk.strip(), group_id=group_id)
+            chunk = line
+            time.sleep(0.5)
+        else:
+            chunk += line
+    if chunk.strip():
+        send_signal_message(recipient, chunk.strip(), group_id=group_id)
+
+def load_qwen_history():
+    if os.path.exists(QWEN_HISTORY_FILE):
+        try:
+            with open(QWEN_HISTORY_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logging.error(f"Error loading Qwen chat history: {e}")
+    return []
+
+def save_qwen_history(history):
+    ensure_staging_dir()
+    try:
+        trimmed = history[-MAX_HISTORY_TURNS:]
+        with open(QWEN_HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(trimmed, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logging.error(f"Error saving Qwen chat history: {e}")
+
+def clear_qwen_history():
+    if os.path.exists(QWEN_HISTORY_FILE):
+        try:
+            os.remove(QWEN_HISTORY_FILE)
+            logging.info("Cleared Qwen chat history.")
+        except Exception as e:
+            logging.error(f"Error clearing Qwen chat history: {e}")
+
+def query_qwen(prompt, history=None):
+    if history is None:
+        history = load_qwen_history()
+    
+    messages = [{"role": "system", "content": QWEN_SYSTEM_PROMPT}] + history + [{"role": "user", "content": prompt}]
+    
+    payload = {
+        "model": QWEN_MODEL,
+        "messages": messages,
+        "temperature": 0.7,
+        "max_tokens": 2048,
+        "stream": False
+    }
+    
+    headers = {"Content-Type": "application/json"}
+    try:
+        logging.info(f"Querying Qwen API at {QWEN_API_URL}...")
+        r = requests.post(QWEN_API_URL, headers=headers, json=payload, timeout=120)
+        r.raise_for_status()
+        data = r.json()
+        choice = data['choices'][0]['message']
+        content = choice.get('content', '').strip()
+        if not content and choice.get('reasoning_content'):
+            content = choice['reasoning_content'].strip()
+            
+        if content:
+            history.append({"role": "user", "content": prompt})
+            history.append({"role": "assistant", "content": content})
+            save_qwen_history(history)
+            return content
+        else:
+            return "⚠️ Received empty response from Qwen."
+    except Exception as e:
+        logging.error(f"Failed to query Qwen API: {e}")
+        return f"⚠️ Error querying Qwen: {str(e)}"
+
+def is_qwen_group(group_info):
+    if not group_info:
+        return False
+    group_id = group_info.get("groupId") or ""
+    group_name = (group_info.get("groupName") or group_info.get("name") or "").lower()
+    
+    if QWEN_SIGNAL_GROUP_ID and group_id == QWEN_SIGNAL_GROUP_ID:
+        return True
+    
+    keywords = ["qwen", "hermes"]
+    if any(k in group_name for k in keywords):
+        return True
+        
+    return False
+
+def is_antigravity_group(group_info):
+    if not group_info:
+        return False
+    group_name = (group_info.get("groupName") or group_info.get("name") or "").lower()
+    keywords = ["antigravity", "gemini", "agy"]
+    return any(k in group_name for k in keywords)
+
+def query_antigravity(prompt):
+    cmd = ["/home/fuad/.local/bin/agy", "-p", prompt]
+    logging.info(f"Querying Antigravity CLI via agy -p: '{prompt[:60]}...'")
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        output = res.stdout.strip()
+        if not output and res.stderr:
+            output = res.stderr.strip()
+        if output:
+            return output
+        return "⚠️ Received empty response from Antigravity."
+    except Exception as e:
+        logging.error(f"Failed to query Antigravity CLI: {e}")
+        return f"⚠️ Error querying Antigravity: {str(e)}"
+
 
 def download_attachment(attachment_id):
     ensure_staging_dir()
@@ -225,6 +377,107 @@ def process_signal_envelope(envelope):
     data = envelope.get("dataMessage", {})
     sync_data = envelope.get("syncMessage", {}).get("sentMessage", {})
     
+    group_info = data.get("groupInfo") or sync_data.get("groupInfo")
+    
+    # 1. Antigravity Group Chat Handling
+    if group_info and is_antigravity_group(group_info):
+        group_id = group_info.get("groupId")
+        attachments = data.get("attachments", []) + sync_data.get("attachments", [])
+        text_msg = data.get("message") or sync_data.get("message")
+        
+        logging.info(f"Processing message for Antigravity Group '{group_info.get('groupName')}' ({group_id})")
+        
+        # Voice Note in Antigravity Group
+        if attachments:
+            for att in attachments:
+                content_type = (att.get("contentType") or att.get("mimeType") or "").lower()
+                filename = (att.get("filename") or "").lower()
+                att_id = att.get("id")
+                if not att_id:
+                    continue
+                is_audio = (
+                    any(t in content_type for t in ("audio", "ogg", "aac", "m4a", "wav", "mp4", "mpeg", "opus"))
+                    or filename.endswith((".ogg", ".m4a", ".wav", ".aac", ".mp3", ".mp4", ".opus"))
+                    or att.get("voiceNote") is True
+                )
+                if is_audio:
+                    filepath = download_attachment(att_id)
+                    if filepath:
+                        send_signal_message(None, "⏳ Transcribing voice prompt for Antigravity...", group_id=group_id)
+                        raw_transcript, lang, prob = voice_harvester.transcribe_audio(filepath)
+                        send_signal_message(None, f"🎙️ *Prompt:* \"{raw_transcript}\"", group_id=group_id)
+                        response = query_antigravity(raw_transcript)
+                        send_split_signal_message(None, response, group_id=group_id)
+                    else:
+                        send_signal_message(None, "⚠️ Failed to download voice prompt attachment.", group_id=group_id)
+                    return
+
+        # Text Message in Antigravity Group
+        if text_msg:
+            cmd = text_msg.strip()
+            if cmd.lower() in ("/status", "!status"):
+                status_msg = f"🚀 **Antigravity CLI Status**\n• Engine: Antigravity / Gemini\n• CLI: `agy -p`\n• Signal API: `{SIGNAL_API_URL}`"
+                send_signal_message(None, status_msg, group_id=group_id)
+                return
+            
+            response = query_antigravity(cmd)
+            send_split_signal_message(None, response, group_id=group_id)
+            return
+
+        return
+
+    # 2. Dedicated Qwen Group Chat Handling
+    if group_info and is_qwen_group(group_info):
+        group_id = group_info.get("groupId")
+        attachments = data.get("attachments", []) + sync_data.get("attachments", [])
+        text_msg = data.get("message") or sync_data.get("message")
+        
+        logging.info(f"Processing message for Qwen Group '{group_info.get('name')}' ({group_id})")
+        
+        # Voice Note in Qwen Group
+        if attachments:
+            for att in attachments:
+                content_type = (att.get("contentType") or att.get("mimeType") or "").lower()
+                filename = (att.get("filename") or "").lower()
+                att_id = att.get("id")
+                if not att_id:
+                    continue
+                is_audio = (
+                    any(t in content_type for t in ("audio", "ogg", "aac", "m4a", "wav", "mp4", "mpeg", "opus"))
+                    or filename.endswith((".ogg", ".m4a", ".wav", ".aac", ".mp3", ".mp4", ".opus"))
+                    or att.get("voiceNote") is True
+                )
+                if is_audio:
+                    filepath = download_attachment(att_id)
+                    if filepath:
+                        send_signal_message(None, "⏳ Transcribing voice prompt...", group_id=group_id)
+                        raw_transcript, lang, prob = voice_harvester.transcribe_audio(filepath)
+                        send_signal_message(None, f"🎙️ *Prompt:* \"{raw_transcript}\"", group_id=group_id)
+                        response = query_qwen(raw_transcript)
+                        send_split_signal_message(None, response, group_id=group_id)
+                    else:
+                        send_signal_message(None, "⚠️ Failed to download voice prompt attachment.", group_id=group_id)
+                    return
+
+        # Text Message in Qwen Group
+        if text_msg:
+            cmd = text_msg.strip()
+            if cmd.lower() in ("/reset", "!reset", "reset"):
+                clear_qwen_history()
+                send_signal_message(None, "🧹 Qwen chat history cleared!", group_id=group_id)
+                return
+            elif cmd.lower() in ("/status", "!status"):
+                status_msg = f"🟢 **Qwen Bridge Status**\n• LLM Endpoint: `{QWEN_API_URL}`\n• Model: `{QWEN_MODEL}`\n• Signal API: `{SIGNAL_API_URL}`\n• Active History Turns: {len(load_qwen_history())}"
+                send_signal_message(None, status_msg, group_id=group_id)
+                return
+            
+            response = query_qwen(cmd)
+            send_split_signal_message(None, response, group_id=group_id)
+            return
+            
+        return
+
+    # 2. Voice Notes Pipeline Handling (Direct Messages / Note to Self)
     source = envelope.get("source") or envelope.get("sourceNumber")
     sync_dest = sync_data.get("destination") or sync_data.get("destinationNumber")
     data_dest = data.get("destination") or data.get("destinationNumber")

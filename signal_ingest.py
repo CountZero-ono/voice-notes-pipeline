@@ -35,6 +35,18 @@ SIGNAL_PHONE_NUMBER = os.environ.get("SIGNAL_PHONE_NUMBER", "+994502214707")
 STAGING_DIR = os.environ.get("VOICE_STAGING_DIR", "/tmp/signal_voice_staging/")
 INBOX_DIR = os.environ.get("VOICE_INBOX_DIR", "/home/fuad/Seafile/Obsidian Vaults/VoiceNotes/Inbox/")
 
+FLATLINE_SRC = "/home/fuad/Projects/BAMA/flatline-mk2/src"
+if FLATLINE_SRC not in sys.path:
+    sys.path.insert(0, FLATLINE_SRC)
+
+try:
+    from flatline.mcp.dixie import query_memory, query_knowledge
+    logging.info("Dixie L1/L2/L3 memory modules imported successfully.")
+except Exception as _e:
+    logging.warning(f"Could not import Dixie memory modules: {_e}")
+    query_memory = None
+    query_knowledge = None
+
 # Qwen LLM Signal Chat Configuration
 QWEN_API_URL = os.environ.get("QWEN_API_URL", "http://127.0.0.1:1235/v1/chat/completions")
 QWEN_MODEL = os.environ.get("QWEN_MODEL", "qwen3.6-35b-a3b-mtp@iq3_s")
@@ -42,6 +54,12 @@ QWEN_SYSTEM_PROMPT = os.environ.get(
     "QWEN_SYSTEM_PROMPT",
     "You are Qwen, a helpful, direct, intelligent Gen-X AI assistant connected via Signal chat. "
     "Keep responses concise and well-formatted in markdown."
+)
+DIXIE_SYSTEM_PROMPT = (
+    "You are Dixie (also called Dix), a sharp, pragmatic ROM construct running locally on a Beelink SER7. "
+    "F.B. is the Architect-in-Chief & Sole Git Committer (final authority). Antigravity is the Lead Heavy Engineering AI. "
+    "Talk naturally like a real person — conversational, direct, witty, and grounded. Never output robotic field lists like '**Name:**' or '**Directive:**'. "
+    "Keep responses concise, natural, and well-formatted."
 )
 QWEN_SIGNAL_GROUP_ID = os.environ.get("QWEN_SIGNAL_GROUP_ID", "")
 QWEN_HISTORY_FILE = os.path.join(STAGING_DIR, "qwen_signal_history.json")
@@ -134,11 +152,28 @@ def clear_qwen_history():
         except Exception as e:
             logging.error(f"Error clearing Qwen chat history: {e}")
 
-def query_qwen(prompt, history=None):
+def query_qwen(prompt, history=None, system_prompt=None):
     if history is None:
         history = load_qwen_history()
     
-    messages = [{"role": "system", "content": QWEN_SYSTEM_PROMPT}] + history + [{"role": "user", "content": prompt}]
+    sys_prompt = system_prompt or QWEN_SYSTEM_PROMPT
+    
+    # Retrieve Flatline memory context for Dixie queries
+    user_content = prompt
+    if ("Dixie" in sys_prompt or sys_prompt == DIXIE_SYSTEM_PROMPT) and query_memory:
+        try:
+            logging.info(f"Retrieving Dixie memory context for prompt: '{prompt[:50]}...'")
+            mem_res = query_memory(prompt)
+            if mem_res and isinstance(mem_res, str) and not mem_res.startswith("Error") and "No memory observations found" not in mem_res:
+                user_content += f"\n\n[Retrieved Flatline Memory Context (L1/L2)]:\n{mem_res}"
+            elif query_knowledge:
+                know_res = query_knowledge(prompt)
+                if know_res and isinstance(know_res, str) and not know_res.startswith("Error"):
+                    user_content += f"\n\n[Retrieved Flatline Knowledge Context (L3 Qdrant)]:\n{know_res}"
+        except Exception as me:
+            logging.warning(f"Error querying Dixie memory context: {me}")
+
+    messages = [{"role": "system", "content": sys_prompt}] + history + [{"role": "user", "content": user_content}]
     
     payload = {
         "model": QWEN_MODEL,
@@ -169,6 +204,12 @@ def query_qwen(prompt, history=None):
     except Exception as e:
         logging.error(f"Failed to query Qwen API: {e}")
         return f"⚠️ Error querying Qwen: {str(e)}"
+
+def is_dixie_group(group_info):
+    if not group_info:
+        return False
+    group_name = (group_info.get("groupName") or group_info.get("name") or "").lower()
+    return "dixie" in group_name
 
 def is_qwen_group(group_info):
     if not group_info:
@@ -424,9 +465,56 @@ def process_signal_envelope(envelope):
             send_split_signal_message(None, response, group_id=group_id)
             return
 
+    # 2. Dedicated Dixie Group Chat Handling
+    if group_info and is_dixie_group(group_info):
+        group_id = group_info.get("groupId")
+        attachments = data.get("attachments", []) + sync_data.get("attachments", [])
+        text_msg = data.get("message") or sync_data.get("message")
+        
+        logging.info(f"Processing message for Dixie Group '{group_info.get('name') or group_info.get('groupName')}' ({group_id})")
+        
+        if attachments:
+            for att in attachments:
+                content_type = (att.get("contentType") or att.get("mimeType") or "").lower()
+                filename = (att.get("filename") or "").lower()
+                att_id = att.get("id")
+                if not att_id:
+                    continue
+                is_audio = (
+                    any(t in content_type for t in ("audio", "ogg", "aac", "m4a", "wav", "mp4", "mpeg", "opus"))
+                    or filename.endswith((".ogg", ".m4a", ".wav", ".aac", ".mp3", ".mp4", ".opus"))
+                    or att.get("voiceNote") is True
+                )
+                if is_audio:
+                    filepath = download_attachment(att_id)
+                    if filepath:
+                        send_signal_message(None, "⏳ Transcribing voice prompt for Dixie...", group_id=group_id)
+                        raw_transcript, lang, prob = voice_harvester.transcribe_audio(filepath)
+                        send_signal_message(None, f"🎙️ *Prompt:* \"{raw_transcript}\"", group_id=group_id)
+                        response = query_qwen(raw_transcript, system_prompt=DIXIE_SYSTEM_PROMPT)
+                        send_split_signal_message(None, response, group_id=group_id)
+                    else:
+                        send_signal_message(None, "⚠️ Failed to download voice prompt attachment.", group_id=group_id)
+                    return
+
+        if text_msg:
+            cmd = text_msg.strip()
+            if cmd.lower() in ("/reset", "!reset", "reset"):
+                clear_qwen_history()
+                send_signal_message(None, "🧹 Dixie chat history cleared!", group_id=group_id)
+                return
+            elif cmd.lower() in ("/status", "!status"):
+                status_msg = f"🤠 **Dixie Signal Agent Status**\n• LLM Endpoint: `{QWEN_API_URL}`\n• Persona: ROM Construct (Dixie)\n• Model: `{QWEN_MODEL}`"
+                send_signal_message(None, status_msg, group_id=group_id)
+                return
+            
+            response = query_qwen(cmd, system_prompt=DIXIE_SYSTEM_PROMPT)
+            send_split_signal_message(None, response, group_id=group_id)
+            return
+            
         return
 
-    # 2. Dedicated Qwen Group Chat Handling
+    # 3. Dedicated Qwen Group Chat Handling
     if group_info and is_qwen_group(group_info):
         group_id = group_info.get("groupId")
         attachments = data.get("attachments", []) + sync_data.get("attachments", [])

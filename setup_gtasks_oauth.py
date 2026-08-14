@@ -11,8 +11,9 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 
 SCOPES = ['https://www.googleapis.com/auth/tasks']
-CLIENT_SECRET_FILE = os.path.expanduser("~/OCProjects/voice-notes-pipeline/oauth_client.json")
-TOKEN_FILE = os.path.expanduser("~/OCProjects/voice-notes-pipeline/token.json")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CLIENT_SECRET_FILE = os.path.join(BASE_DIR, "oauth_client.json")
+TOKEN_FILE = os.path.join(BASE_DIR, "token.json")
 
 def main():
     creds = None

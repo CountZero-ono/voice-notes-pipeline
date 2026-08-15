@@ -3,7 +3,9 @@ import os
 import shutil
 import unittest
 import tempfile
+import yaml
 import voice_harvester
+import signal_ingest
 
 class TestVoiceNotesPipelineE2E(unittest.TestCase):
     def setUp(self):
@@ -19,17 +21,19 @@ class TestVoiceNotesPipelineE2E(unittest.TestCase):
         os.makedirs(self.sandbox_inbox, exist_ok=True)
         os.makedirs(self.sandbox_archive, exist_ok=True)
         
-        # Override voice_harvester module-level directories
+        # Override module-level directories
         self.orig_raw = voice_harvester.RAW_DIR
         self.orig_inbox = voice_harvester.INBOX_DIR
         self.orig_archive = voice_harvester.ARCHIVE_DIR
         self.orig_state = voice_harvester.STATE_FILE
         self.orig_dry_run = voice_harvester.DRY_RUN
+        self.orig_signal_inbox = signal_ingest.INBOX_DIR
         
         voice_harvester.RAW_DIR = self.sandbox_raw
         voice_harvester.INBOX_DIR = self.sandbox_inbox
         voice_harvester.ARCHIVE_DIR = self.sandbox_archive
         voice_harvester.STATE_FILE = self.sandbox_state
+        signal_ingest.INBOX_DIR = self.sandbox_inbox
         
         # Enable dry-run by default unless TEST_LIVE is set
         if os.environ.get("TEST_LIVE") == "1":
@@ -50,6 +54,7 @@ class TestVoiceNotesPipelineE2E(unittest.TestCase):
         voice_harvester.ARCHIVE_DIR = self.orig_archive
         voice_harvester.STATE_FILE = self.orig_state
         voice_harvester.DRY_RUN = self.orig_dry_run
+        signal_ingest.INBOX_DIR = self.orig_signal_inbox
         
         # Clean sandbox
         shutil.rmtree(self.test_dir)
@@ -82,17 +87,19 @@ class TestVoiceNotesPipelineE2E(unittest.TestCase):
         with open(note_path, "r", encoding="utf-8") as f:
             note_content = f.read()
             
-        self.assertIn("---", note_content, "Frontmatter not found in note")
+        fm, body = voice_harvester.extract_frontmatter_and_body(note_content)
+        self.assertTrue(fm, "Frontmatter dictionary is empty")
         
         # Check if the note is an appointment and has "pending" status
-        is_appointment = "appointments" in note_content.lower()
-        if is_appointment:
-            self.assertIn('status: "pending"', note_content, "Pending status missing from appointment note")
+        categories = fm.get("categories", [])
+        if "appointments" in categories:
+            self.assertEqual(fm.get("status"), "pending", "Pending status missing from appointment note")
             
             # 4. Simulate user approval by updating status to approved
-            approved_content = note_content.replace('status: "pending"', 'status: "approved"')
-            with open(note_path, "w", encoding="utf-8") as f:
-                f.write(approved_content)
+            fm["status"] = "approved"
+            new_yaml = yaml.safe_dump(fm, sort_keys=False, allow_unicode=True)
+            approved_content = f"---\n{new_yaml}---\n{body.lstrip()}"
+            voice_harvester.atomic_write(note_path, approved_content)
                 
             # 5. Run the sync loop to sync approved notes
             voice_harvester.check_and_sync_approved_notes()
@@ -100,11 +107,54 @@ class TestVoiceNotesPipelineE2E(unittest.TestCase):
             # 6. Verify status updated to synced
             with open(note_path, "r", encoding="utf-8") as f:
                 final_content = f.read()
-            self.assertIn('status: "synced"', final_content, "Note status was not updated to synced after sync run!")
+            final_fm, _ = voice_harvester.extract_frontmatter_and_body(final_content)
+            self.assertEqual(final_fm.get("status"), "synced", "Note status was not updated to synced after sync run!")
+
+    def test_yaml_and_event_parsers(self):
+        sample_markdown = """---
+categories:
+  - appointments
+  - technical
+title: "Project Sync"
+date: "2026-08-20"
+startTime: "14:00"
+endTime: "15:00"
+allDay: false
+---
+# Transcript
+Discussion about pipeline.
+
+# Extracted Tasks
+- [ ] Deploy new version 📅 2026-08-20
+"""
+        fm, body = voice_harvester.extract_frontmatter_and_body(sample_markdown)
+        self.assertEqual(fm.get("title"), "Project Sync")
+        self.assertEqual(fm.get("categories"), ["appointments", "technical"])
+        
+        event = voice_harvester.parse_event_from_frontmatter(sample_markdown)
+        self.assertIsNotNone(event)
+        self.assertEqual(event["title"], "Project Sync")
+        self.assertEqual(event["date"], "2026-08-20")
+        self.assertEqual(event["startTime"], "14:00")
+        self.assertFalse(event["allDay"])
+        
+        tasks = voice_harvester.parse_tasks_from_markdown(sample_markdown)
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0]["title"], "Deploy new version")
+        self.assertEqual(tasks[0]["due_date"], "2026-08-20")
+
+    def test_atomic_write_and_state(self):
+        test_file = os.path.join(self.sandbox_inbox, "atomic_test.md")
+        content = "---\ntitle: Atomic Test\n---\nHello World"
+        voice_harvester.atomic_write(test_file, content)
+        self.assertTrue(os.path.exists(test_file))
+        with open(test_file, "r", encoding="utf-8") as f:
+            self.assertEqual(f.read(), content)
             
-        else:
-            # If not an appointment, verify it doesn't have status: pending
-            self.assertNotIn("status: ", note_content, "Non-appointment note has status field")
+        test_state = {"test_audio.m4a": {"size": 12345, "processed_at": "2026-08-15"}}
+        voice_harvester.save_state(test_state)
+        loaded = voice_harvester.load_state()
+        self.assertEqual(loaded.get("test_audio.m4a", {}).get("size"), 12345)
 
 if __name__ == "__main__":
     unittest.main()

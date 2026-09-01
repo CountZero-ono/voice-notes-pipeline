@@ -6,3 +6,5 @@ venv/
 .venv/
 gcal_credentials.json
 *.json
+flatline.db
+graphify-out/

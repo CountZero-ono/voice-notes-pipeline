@@ -254,6 +254,9 @@ def clean_and_extract_llm(raw_text, max_retries=3, initial_backoff=2):
         "model": LLM_MODEL,
         "messages": messages,
         "temperature": 0.1,
+        "max_tokens": 1200,
+        "chat_template_kwargs": {"enable_thinking": False},
+        "thinking_budget_tokens": 0,
         "stream": False
     }
 
@@ -261,20 +264,66 @@ def clean_and_extract_llm(raw_text, max_retries=3, initial_backoff=2):
     for attempt in range(1, max_retries + 1):
         try:
             logging.info(f"Sending transcript to local LLM at {LLM_API_URL} (attempt {attempt}/{max_retries})...")
-            response = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=120)
+            response = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=30)
             response.raise_for_status()
             res_json = response.json()
             llm_output = res_json['choices'][0]['message']['content']
-            logging.info("LLM response received successfully.")
+            logging.info("Local LLM response received successfully.")
             return llm_output
         except Exception as e:
-            logging.warning(f"LLM request attempt {attempt} failed: {e}")
+            logging.warning(f"Local LLM request attempt {attempt} failed: {e}")
             if attempt < max_retries:
                 time.sleep(backoff)
                 backoff *= 2
-            else:
-                logging.error(f"All LLM retry attempts failed: {e}")
-                return None
+
+    # Tier-2 Failover: Vertex AI Gemini Flash
+    logging.warning("All local LLM attempts failed. Initiating Tier-2 Cloud Failover to Vertex AI Gemini Flash...")
+    cloud_output = extract_llm_vertex_gemini(messages)
+    if cloud_output:
+        return cloud_output
+
+    logging.error("All LLM tiers (Local Qwen + Vertex Gemini) failed.")
+    return None
+
+
+def extract_llm_vertex_gemini(messages):
+    """Tier-2 Cloud Failover: calls Gemini 2.5 Flash via Vertex AI."""
+    try:
+        import google.auth
+        from google.auth.transport.requests import Request
+        project_id = os.environ.get("VERTEX_PROJECT_ID", "project-a4472335-7c7d-4369-8b4")
+        creds, _ = google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])
+        creds.refresh(Request())
+
+        system_instruction = ""
+        user_prompt = ""
+        for m in messages:
+            if m.get("role") == "system":
+                system_instruction = m.get("content", "")
+            elif m.get("role") == "user":
+                user_prompt = m.get("content", "")
+
+        url = f"https://aiplatform.googleapis.com/v1beta1/projects/{project_id}/locations/global/endpoints/openapi/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {creds.token}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "google/gemini-3.7-flash",
+            "messages": messages,
+            "temperature": 0.1,
+            "max_tokens": 1500
+        }
+        logging.info("Requesting completion from Vertex AI Gemini 3.7 Flash...")
+        resp = requests.post(url, headers=headers, json=payload, timeout=20)
+        resp.raise_for_status()
+        res_json = resp.json()
+        content = res_json['choices'][0]['message']['content']
+        logging.info("Tier-2 Vertex AI Gemini 3.7 Flash response received successfully.")
+        return content
+    except Exception as e:
+        logging.error(f"Tier-2 Vertex AI Gemini 3.7 Flash failover failed: {e}")
+        return None
 
 
 def extract_frontmatter_and_body(markdown_text):
@@ -806,8 +855,25 @@ def process_file(filepath):
 
     llm_content = clean_and_extract_llm(raw_transcript)
     if not llm_content:
-        logging.error(f"LLM processing failed for {filename}. Will retry on next check.")
-        return False
+        logging.warning(f"All LLM tiers failed for {filename}. Triggering Tier-3 Dead-Letter fallback.")
+        dead_letter_content = (
+            f"---\n"
+            f"categories:\n"
+            f"  - life\n"
+            f"title: \"Voice Note: {os.path.splitext(filename)[0]}\"\n"
+            f"status: pending\n"
+            f"tags:\n"
+            f"  - voicenote\n"
+            f"  - inbox\n"
+            f"  - dead-letter\n"
+            f"  - unprocessed-llm\n"
+            f"---\n\n"
+            f"# Raw Transcript (LLM Structuring Unavailable)\n\n"
+            f"{raw_transcript}\n"
+        )
+        write_to_inbox(filename, f"{lang} ({prob:.2%})", raw_transcript, dead_letter_content)
+        archive_file(filepath)
+        return "dead_letter"
 
     write_to_inbox(filename, f"{lang} ({prob:.2%})", raw_transcript, llm_content)
     archive_file(filepath)

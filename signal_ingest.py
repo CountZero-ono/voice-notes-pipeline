@@ -247,7 +247,7 @@ def process_audio_attachment_sync(att_id, sender):
         return
 
     success = voice_harvester.process_file(filepath)
-    if success:
+    if success is True:
         latest = get_target_pending_appointment_note()
         if latest:
             _, _, content = latest
@@ -265,6 +265,8 @@ def process_audio_attachment_sync(att_id, sender):
             )
         else:
             reply = "✅ Voice note processed & staged in Obsidian Inbox!"
+    elif success == "dead_letter":
+        reply = "⚠️ Voice note transcribed, but LLM structuring was unavailable. Raw transcript saved to Obsidian Inbox/Life/!"
     else:
         reply = "⚠️ Failed to process incoming voice note."
 

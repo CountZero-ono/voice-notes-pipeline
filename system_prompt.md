@@ -42,6 +42,8 @@ Generate the output starting with a YAML frontmatter containing the `categories`
 categories:
   - <category1>
   - <category2>  # Optional, if overlapping
+# If technical is in categories, specify resolution status:
+status: <solved | pending>
 # Include the following properties ONLY if category list contains 'appointments' and an event is explicitly scheduled:
 title: "<Event Title>"
 allDay: <true | false>
@@ -58,13 +60,23 @@ endTime: "<HH:MM>"
     *   `# Extracted Tasks`: List the tasks in Obsidian Tasks format: `- [ ] <Task Description> 📅 <YYYY-MM-DD>` (Calculate the date relative to **Today's Reference Date**; omit the date tag if no date is mentioned). If no tasks are present, write "None detected."
 
 2.  **If `technical` is in categories:**
-    *   `# Technical Summary`: Place a structured representation of the transcript here. Clean the transcript, organize it using logical sections, headers, and list items. Highlight technical terms, commands (use `` `inline code` `` or block code blocks), and specific constants.
-    *   `# Key Knowledge & Facts`: Use bullet points to list the main technical takeaways, configuration rules, IP addresses, parameters, or factual updates.
+    *   **Determine Technical Status:**
+        *   **`status: solved`**: The speaker describes an issue that has already been resolved, an established architecture decision, a working configuration change, or a validated benchmark.
+        *   **`status: pending`**: The speaker describes an open bug, an active failure, an unanswered question, a feature request, or an investigation in progress.
+    *   **If `status: solved`:**
+        *   `# Problem & Root Cause`: Explain the initial problem, error symptoms, or motivation.
+        *   `# Solution & Permanent Takeaways`: Detail the exact technical fix, commands, parameter adjustments, or configuration applied.
+        *   `# Key Knowledge & Facts`: Use bullet points for critical constants, model names, IP addresses, ports, or architectural rules.
+    *   **If `status: pending`:**
+        *   `# Technical Summary`: Summary of the observed issue, unexpected behavior, or planned work.
+        *   `# Actionable Next Steps / Investigation Tasks`: Formulate tasks as Obsidian tasks: `- [ ] Investigate/Fix <Specific Issue>`.
+    *   **Obsidian Wikilinks (Technical Only):** Wrap all key software names, hardware nodes, AI models, services, protocols, and core concepts in Obsidian `[[Wikilinks]]` (e.g. `[[Dixie]]`, `[[Vertex API]]`, `[[SER7]]`, `[[virtsrv2]]`, `[[Qdrant]]`, `[[L1 SQLite]]`, `[[Neo4j]]`, `[[Crystallization]]`, `[[Antigravity]]`) so the technical note hooks directly into the Obsidian knowledge graph.
+    *   **Domain Vocabulary Awareness:** Note that words like `Crystallization`, `Flatline`, `L1/L2/L3 Memory`, `Hermes`, `MemMachine`, `Whisper`, `Qdrant`, and `Neo4j` are legitimate internal infrastructure terms, not speech-to-text typos.
 
 3.  **If `life` is in categories (and it is the ONLY category):**
     *   `# Cleaned Transcript`: Put the simple cleaned transcript here. Do not add task logs or knowledge tables.
 
-*Note: If both `appointments` and `technical` are matched, output `# Cleaned Transcript` (with tasks) followed by `# Technical Summary` and `# Key Knowledge & Facts`.*
+*Note: If both `appointments` and `technical` are matched, output `# Cleaned Transcript` (with tasks) followed by the appropriate technical status sections.*
 
 ---
 

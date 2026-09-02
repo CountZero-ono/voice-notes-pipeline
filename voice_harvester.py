@@ -45,6 +45,11 @@ ARCHIVE_DIR = os.environ.get("VOICE_ARCHIVE_DIR", "/mnt/RAID5/VoiceNotesArchive/
 LLM_API_URL = os.environ.get("LLM_API_URL", "http://127.0.0.1:1235/v1/chat/completions")  # Port 1235 maps to Qwen 35B
 LLM_MODEL = os.environ.get("LLM_MODEL", "qwen")
 
+# Cloud Failover Configuration ("qwen_cloud", "vertex", or "none")
+CLOUD_FAILOVER_PROVIDER = os.environ.get("VOICE_CLOUD_FAILOVER", "qwen_cloud").lower()
+BAI_API_URL = os.environ.get("BAI_API_URL", "https://api.b.ai/v1/chat/completions")
+BAI_MODEL = os.environ.get("BAI_MODEL", "qwen3.8-flash")
+
 # Whisper Config
 WHISPER_MODEL_NAME = os.environ.get("WHISPER_MODEL", "large-v3-turbo")
 WHISPER_THREADS = int(os.environ.get("WHISPER_THREADS", "4"))
@@ -276,14 +281,77 @@ def clean_and_extract_llm(raw_text, max_retries=3, initial_backoff=2):
                 time.sleep(backoff)
                 backoff *= 2
 
-    # Tier-2 Failover: Vertex AI Gemini Flash
-    logging.warning("All local LLM attempts failed. Initiating Tier-2 Cloud Failover to Vertex AI Gemini Flash...")
-    cloud_output = extract_llm_vertex_gemini(messages)
-    if cloud_output:
-        return cloud_output
+    # Tier-2/Tier-3 Failover Cascade
+    if CLOUD_FAILOVER_PROVIDER == "qwen_cloud":
+        logging.warning("All local LLM attempts failed. Initiating Tier-2 Cloud Failover to b.ai Qwen...")
+        cloud_output = extract_llm_cloud_qwen(messages)
+        if cloud_output:
+            return cloud_output
+        logging.warning("b.ai Qwen failover failed or unavailable. Cascading to Tier-3 Vertex AI Gemini Flash safety net...")
+        cloud_output = extract_llm_vertex_gemini(messages)
+        if cloud_output:
+            return cloud_output
+    elif CLOUD_FAILOVER_PROVIDER == "vertex":
+        logging.warning("All local LLM attempts failed. Initiating Tier-2 Cloud Failover to Vertex AI Gemini Flash...")
+        cloud_output = extract_llm_vertex_gemini(messages)
+        if cloud_output:
+            return cloud_output
+    elif CLOUD_FAILOVER_PROVIDER == "none":
+        logging.info("Cloud failover disabled by configuration (VOICE_CLOUD_FAILOVER=none).")
 
-    logging.error("All LLM tiers (Local Qwen + Vertex Gemini) failed.")
+    logging.error("All configured LLM tiers failed.")
     return None
+
+
+def get_bai_api_key():
+    """Retrieve b.ai API key from environment or ~/.hermes/bai.env."""
+    key = os.environ.get("B_API_KEY") or os.environ.get("BAI_API_KEY")
+    if key:
+        return key.strip()
+    env_path = os.path.expanduser("~/.hermes/bai.env")
+    if os.path.exists(env_path):
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("B_API_KEY="):
+                        return line.split("=", 1)[1].strip().strip('"').strip("'")
+                    if line.startswith("CUSTOM_API_KEY="):
+                        return line.split("=", 1)[1].strip().strip('"').strip("'")
+        except Exception as e:
+            logging.debug(f"Error reading ~/.hermes/bai.env: {e}")
+    return None
+
+
+def extract_llm_cloud_qwen(messages):
+    """Tier-2 Cloud Failover: calls Qwen 3.8 Flash via b.ai custom API."""
+    api_key = get_bai_api_key()
+    if not api_key:
+        logging.warning("b.ai API key not found in env (B_API_KEY) or ~/.hermes/bai.env; skipping cloud Qwen.")
+        return None
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": BAI_MODEL,
+        "messages": messages,
+        "temperature": 0.1,
+        "max_tokens": 1200,
+        "stream": False
+    }
+    try:
+        logging.info(f"Requesting completion from b.ai Cloud Qwen ({BAI_MODEL})...")
+        resp = requests.post(BAI_API_URL, headers=headers, json=payload, timeout=30)
+        resp.raise_for_status()
+        res_json = resp.json()
+        content = res_json['choices'][0]['message']['content']
+        logging.info(f"Tier-2 b.ai Cloud Qwen ({BAI_MODEL}) response received successfully.")
+        return content
+    except Exception as e:
+        logging.error(f"Tier-2 b.ai Cloud Qwen failover failed: {e}")
+        return None
 
 
 def extract_llm_vertex_gemini(messages):

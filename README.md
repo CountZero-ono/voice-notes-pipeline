@@ -1,22 +1,22 @@
 # Voice Notes Thought Conveyor
 
-An automated, local, zero-cloud voice-to-thought pipeline that ingests voice messages over Signal, transcribes them using `faster-whisper`, structures trilingual text via local LLMs (Qwen 3.6 35B), auto-routes formatted notes into an Obsidian Vault (`Appointments`, `Technical`, `Life`), and provides zero-VPN interactive calendar management (`approve`, `reject`, `reschedule`) synced directly to Radicale CalDAV.
+An automated, local, zero-cloud voice-to-thought pipeline that ingests voice messages over Signal, transcribes them using `faster-whisper` (or BAMA Gateway), structures trilingual text via LLMs (Qwen 35B / Gemini), auto-routes formatted notes into an Obsidian Vault (`Appointments`, `Technical`, `Life`), and provides zero-VPN interactive calendar management (`approve`, `reject`, `reschedule`) synced directly to Google Calendar & Google Tasks.
 
 ---
 
 ## Architecture Overview
 
 ```
-[ Mobile / Signal App ] ──(Voice Note / Text)──► [ signal-cli-rest-api (Port 8080) ]
+[ Mobile / Signal App ] ──(Voice Note / Text)──► [ signal-cli-rest-api (Port 8080/8081) ]
                                                             │
                                                             ▼ (WebSocket Stream)
-                                            [ signal_ingest.py Listener ]
+                                             [ signal_ingest.py Listener ]
                                                             │
                                                             ▼
-                                           [ faster-whisper ASR (CPU int8) ]
+                                            [ BAMA Gateway / Faster-Whisper ASR ]
                                                             │
                                                             ▼
-                                           [ Qwen 3.6 35B (Port 1235) ]
+                                            [ BAMA Gateway / Qwen 35B / Gemini ]
                                                             │
                                                             ├──► Obsidian Vault Inbox (/Inbox)
                                                             ├──► RAID5 Raw Archive (/VoiceNotesArchive)
@@ -24,21 +24,21 @@ An automated, local, zero-cloud voice-to-thought pipeline that ingests voice mes
                                                                   (Approve / Reject / Reschedule)
                                                                         │
                                                                         ▼
-                                                              [ Radicale CalDAV Server ]
+                                                              [ Google Calendar & Google Tasks ]
 ```
 
 ---
 
 ## Core Features
 
-- **Trilingual Speech-to-Text:** Converts English, Russian, and Azerbaijani voice notes automatically using `faster-whisper` (`large-v3-turbo` model on CPU).
+- **Trilingual Speech-to-Text:** Converts English, Russian, and Azerbaijani voice notes automatically using `faster-whisper` (`large-v3-turbo` model on CPU or BAMA Gateway cascade).
 - **LLM Cleanup & Feature Extraction:** Removes spoken filler words (e.g. *"новая строка"*, *"yeni sətir"*), extracts YAML frontmatter, tasks (`- [ ]`), and structured markdown summaries.
 - **Priority Multi-Folder Routing:** Routes notes into Obsidian subfolders:
   - `Inbox/Appointments/` — Deadlines, meetings, tasks (`status: pending`).
   - `Inbox/Technical/` — Code snippets, CLI specs, project facts.
   - `Inbox/Life/` — Daily logs, journals, general thoughts.
-- **Zero-VPN Mobile Control:** Receive instant 2-stage Signal receipts (`⏳ Processing...` ──► `✅ Staged!`), live Radicale CalDAV conflict checks (`🟢 Free` / `⚠️ Conflict`), and manage events directly in Signal text replies (`approve`, `reject`, `15:30`).
-- **Data Sovereignty:** 100% cloud-free runtime. Raw audio files move straight to `/mnt/RAID5/VoiceNotesArchive/`.
+- **Zero-VPN Mobile Control:** Receive instant 2-stage Signal receipts (`⏳ Processing...` ──► `✅ Staged!`), live Google Calendar conflict checks (`🟢 Free` / `⚠️ Conflict`), and manage events directly in Signal text replies (`approve`, `reject`, `15:30`).
+- **Data Sovereignty:** Local-first runtime. Sovereign notes live permanently in the Obsidian Vault, and raw audio files move straight to `/mnt/RAID5/VoiceNotesArchive/`.
 
 ---
 
@@ -54,7 +54,7 @@ An automated, local, zero-cloud voice-to-thought pipeline that ingests voice mes
 
 ## Deploying for Yourself or a Friend
 
-### Option A: The Sovereign Homelab Stack (Local AI + Radicale + Obsidian)
+### Option A: The Sovereign Homelab Stack (Local AI + Google Calendar + Obsidian)
 
 1. **Start the Signal Gateway (Docker):**
    ```bash
@@ -72,11 +72,10 @@ An automated, local, zero-cloud voice-to-thought pipeline that ingests voice mes
 3. **Configure Environment Variables & Credentials:**
    ```bash
    export SIGNAL_PHONE_NUMBER="+1234567890"
-   export LLM_API_URL="http://127.0.0.1:1235/v1/chat/completions"
-   export RADICALE_CALENDAR_URL="http://192.168.1.30:5232/user/calendar/"
-   export GCAL_CREDENTIALS="/home/fuad/OCProjects/voice-notes-pipeline/gcal_credentials.json"
+   export BAMA_GATEWAY_URL="http://192.168.1.37:8090/v1"
+   export GCAL_CREDENTIALS="/home/fuad/Projects/BAMA/voice-notes-pipeline/gcal_credentials.json"
    ```
-   *(Optional: Place your Google Cloud Service Account `gcal_credentials.json` file in the repo directory for automatic Google Calendar events & Google Tasks dual-sync).*
+   *(Place your Google Cloud Service Account `gcal_credentials.json` and `token.json` in the repo directory for Google Calendar & Tasks sync).*
 
 4. **Launch the Listener:**
    ```bash

@@ -4,7 +4,7 @@ Signal Voice Note Ingestion & Interactive Command Module for Voice Notes Pipelin
 Connects to local signal-cli-rest-api via WebSocket:
 1. Ingests incoming voice notes (Direct Message / Note-to-Self) asynchronously without blocking the event loop.
 2. Sends instant receipt & completion alerts back to Signal.
-3. Performs live Radicale CalDAV conflict checks for appointment notes.
+3. Stages appointments and tasks with sovereign Obsidian Vault archiving and Google Calendar sync.
 4. Handles text replies ('approve', 'reject', '15:30') with atomic frontmatter updates.
 """
 
@@ -93,42 +93,40 @@ def download_attachment(attachment_id):
 
 
 def check_calendar_conflicts(date_str, start_time_str):
-    """Performs conflict check against Radicale CalDAV calendar."""
+    """Performs conflict check against Google Calendar if available, otherwise reports staged."""
     if not date_str or date_str == "Today":
         return "🟢 **Calendar Free**"
 
-    url = voice_harvester.RADICALE_CALENDAR_URL
-    auth = voice_harvester.RADICALE_AUTH
-    if not auth:
-        return "ℹ️ Radicale credentials not set (Conflict check skipped)"
+    if os.path.exists(voice_harvester.GCAL_CREDENTIALS_FILE):
+        try:
+            from google.oauth2 import service_account
+            from googleapiclient.discovery import build
 
-    parsed_base = urlparse(url)
-    base_server = f"{parsed_base.scheme}://{parsed_base.netloc}"
-    date_clean = date_str.replace("-", "")
-    conflicts = []
+            SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
+            creds = service_account.Credentials.from_service_account_file(
+                voice_harvester.GCAL_CREDENTIALS_FILE, scopes=SCOPES
+            )
+            service = build('calendar', 'v3', credentials=creds)
 
-    try:
-        r = requests.request("PROPFIND", url, headers={"Depth": "1"}, auth=auth, timeout=5)
-        if r.status_code == 207:
-            hrefs = re.findall(r'<[a-zA-Z0-9:]*href>([^<]+\.ics)</[a-zA-Z0-9:]*href>', r.text)
-            for href in hrefs:
-                event_url = f"{base_server}{href}" if href.startswith("/") else href
-                try:
-                    ev_r = requests.get(event_url, auth=auth, timeout=3)
-                    if ev_r.status_code == 200:
-                        ics_text = ev_r.text
-                        if date_clean in ics_text or date_str in ics_text:
-                            sum_m = re.search(r'SUMMARY:(.+)', ics_text)
-                            summary = sum_m.group(1).strip() if sum_m else "Existing Event"
-                            conflicts.append(summary)
-                except Exception:
-                    pass
-    except Exception as e:
-        logging.warning(f"Could not check calendar conflicts: {e}")
+            time_min = f"{date_str}T00:00:00Z"
+            time_max = f"{date_str}T23:59:59Z"
+            events_result = service.events().list(
+                calendarId=voice_harvester.GCAL_CALENDAR_ID,
+                timeMin=time_min,
+                timeMax=time_max,
+                singleEvents=True,
+                orderBy='startTime'
+            ).execute()
+            items = events_result.get('items', [])
+            if items:
+                conflicts = [item.get('summary', 'Existing Event') for item in items]
+                return f"⚠️ **Calendar Conflict:** Existing entry on {date_str}: '{conflicts[0]}'"
+            return "🟢 **Calendar Free** (No conflicts found)"
+        except Exception as e:
+            logging.debug(f"Google Calendar conflict check omitted: {e}")
+            return "🟢 **Staged to Vault**"
 
-    if conflicts:
-        return f"⚠️ **Calendar Conflict:** Existing entry on {date_str}: '{conflicts[0]}'"
-    return "🟢 **Calendar Free** (No conflicts found)"
+    return "🟢 **Staged to Vault**"
 
 
 def parse_note_details(content):

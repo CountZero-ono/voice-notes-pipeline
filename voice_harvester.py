@@ -5,8 +5,8 @@ Processes local multi-lingual voice notes on CPU, classifies and cleans them usi
 deposits formatted notes in categorized subfolders inside the Obsidian Vault Inbox.
 If a note contains appointments/tasks, it sets 'status: pending' in the frontmatter.
 When a user approves a note by setting 'status: approved', it automatically pushes the
-finalized events and tasks to Google Calendar/Tasks (primary) or Radicale CalDAV (fallback)
-and updates the status to 'synced'.
+finalized events and tasks to Google Calendar/Tasks while preserving the sovereign
+Obsidian Vault Markdown note, and updates the status to 'synced'.
 """
 
 import os
@@ -74,13 +74,6 @@ WHISPER_MODEL_NAME = os.environ.get("WHISPER_MODEL", "large-v3-turbo")
 WHISPER_THREADS = int(os.environ.get("WHISPER_THREADS", "4"))
 GROQ_API_URL = os.environ.get("GROQ_API_URL", "https://api.groq.com/openai/v1/audio/transcriptions")
 GROQ_WHISPER_MODEL = os.environ.get("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo")
-
-# Radicale CalDAV Configuration (Fallback)
-RADICALE_CALENDAR_URL = os.environ.get("RADICALE_CALENDAR_URL", "http://192.168.1.30:5232/fuad/64e71687-ed01-f827-c34f-38222fd871f5/")
-RADICALE_TASKS_URL = os.environ.get("RADICALE_TASKS_URL", "http://192.168.1.30:5232/fuad/a88e07f8-1c04-17c6-6a6c-5be1c5bf0879/")
-RADICALE_USER = os.environ.get("RADICALE_USER", "fuad")
-RADICALE_PASSWORD = os.environ.get("RADICALE_PASSWORD", "")
-RADICALE_AUTH = (RADICALE_USER, RADICALE_PASSWORD) if RADICALE_PASSWORD else None
 
 # Google Calendar & Tasks Configuration (Primary)
 DEFAULT_GCAL_CREDS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gcal_credentials.json")
@@ -640,137 +633,6 @@ def normalize_time_str(time_str):
         return f"{int(h):02d}:{int(m):02d}:{int(s):02d}"
     return time_str
 
-
-def push_event_to_radicale(title, date_str, start_time=None, end_time=None, all_day=True):
-    """Pushes event to Radicale CalDAV server as fallback."""
-    if not RADICALE_AUTH:
-        logging.info("Radicale credentials not configured. Skipping Radicale push.")
-        return False
-
-    uid = str(uuid.uuid4())
-    dtstamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
-    title_clean = title.replace('"', '\\"').replace('\n', ' ')
-
-    if all_day or not start_time:
-        date_clean = date_str.replace("-", "")
-        try:
-            dt = datetime.strptime(date_str, "%Y-%m-%d")
-            end_dt = dt + timedelta(days=1)
-            end_date_clean = end_dt.strftime("%Y%m%d")
-        except Exception:
-            end_date_clean = date_clean
-        dtstart_line = f"DTSTART;VALUE=DATE:{date_clean}"
-        dtend_line = f"DTEND;VALUE=DATE:{end_date_clean}"
-    else:
-        norm_start = normalize_time_str(start_time)
-        norm_end = normalize_time_str(end_time) if end_time else None
-
-        start_clean = f"{date_str.replace('-', '')}T{norm_start.replace(':', '')}"
-        if norm_end:
-            end_clean = f"{date_str.replace('-', '')}T{norm_end.replace(':', '')}"
-        else:
-            try:
-                s_dt = datetime.strptime(f"{date_str} {norm_start[:5]}", "%Y-%m-%d %H:%M")
-                e_dt = s_dt + timedelta(hours=1)
-                end_clean = e_dt.strftime("%Y%m%dT%H%M%S")
-            except Exception:
-                end_clean = start_clean
-        dtstart_line = f"DTSTART:{start_clean}"
-        dtend_line = f"DTEND:{end_clean}"
-
-    ics_content = f"""BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:-//Voice Notes Pipeline//NONSGML//EN
-BEGIN:VEVENT
-UID:{uid}
-DTSTAMP:{dtstamp}
-SUMMARY:{title_clean}
-{dtstart_line}
-{dtend_line}
-BEGIN:VALARM
-TRIGGER:-PT15M
-ACTION:DISPLAY
-DESCRIPTION:Reminder: {title_clean}
-END:VALARM
-END:VEVENT
-END:VCALENDAR"""
-
-    url = f"{RADICALE_CALENDAR_URL.rstrip('/')}/{uid}.ics"
-    if DRY_RUN:
-        logging.info(f"[DRY RUN] Would push event '{title}' to Radicale: {url}")
-        return True
-
-    try:
-        r = requests.put(
-            url,
-            data=ics_content.encode('utf-8'),
-            headers={'Content-Type': 'text/calendar; charset=utf-8'},
-            auth=RADICALE_AUTH,
-            timeout=10
-        )
-        r.raise_for_status()
-        logging.info(f"Successfully pushed event '{title}' to Radicale CalDAV: {url}")
-        return True
-    except Exception as e:
-        logging.error(f"Failed to push event to Radicale: {e}")
-        return False
-
-
-def push_task_to_radicale(title, due_date=None):
-    """Pushes todo task to Radicale CalDAV server as fallback."""
-    if not RADICALE_AUTH:
-        logging.info("Radicale credentials not configured. Skipping Radicale task push.")
-        return False
-
-    uid = str(uuid.uuid4())
-    dtstamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
-    title_clean = title.replace('"', '\\"').replace('\n', ' ')
-
-    due_line = ""
-    alarm_block = ""
-    if due_date:
-        date_clean = due_date.replace("-", "")
-        due_line = f"DUE;VALUE=DATE:{date_clean}"
-        alarm_block = f"""BEGIN:VALARM
-TRIGGER;VALUE=DATE-TIME:{date_clean}T090000
-ACTION:DISPLAY
-DESCRIPTION:Task Reminder: {title_clean}
-END:VALARM"""
-
-    ics_content = f"""BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:-//Voice Notes Pipeline//NONSGML//EN
-BEGIN:VTODO
-UID:{uid}
-DTSTAMP:{dtstamp}
-SUMMARY:{title_clean}
-STATUS:NEEDS-ACTION
-{due_line}
-{alarm_block}
-END:VTODO
-END:VCALENDAR"""
-
-    url = f"{RADICALE_TASKS_URL.rstrip('/')}/{uid}.ics"
-    if DRY_RUN:
-        logging.info(f"[DRY RUN] Would push task '{title}' (due: {due_date}) to Radicale: {url}")
-        return True
-
-    try:
-        r = requests.put(
-            url,
-            data=ics_content.encode('utf-8'),
-            headers={'Content-Type': 'text/calendar; charset=utf-8'},
-            auth=RADICALE_AUTH,
-            timeout=10
-        )
-        r.raise_for_status()
-        logging.info(f"Successfully pushed task '{title}' to Radicale CalDAV: {url}")
-        return True
-    except Exception as e:
-        logging.error(f"Failed to push task to Radicale: {e}")
-        return False
-
-
 def push_event_to_gcal(title, date_str, start_time=None, end_time=None, all_day=True):
     """Pushes event to Google Calendar (Primary)."""
     if not os.path.exists(GCAL_CREDENTIALS_FILE):
@@ -878,34 +740,22 @@ def push_task_to_gtasks(title, due_date=None):
 
 
 def sync_event(event_dict):
-    """Syncs event to Google Calendar (Primary) with Radicale CalDAV fallback."""
+    """Syncs event to Google Calendar (Primary). Obsidian Markdown remains the local canonical record."""
     title = event_dict.get("title")
     date_str = event_dict.get("date")
     start_time = event_dict.get("startTime")
     end_time = event_dict.get("endTime")
     all_day = event_dict.get("allDay", True)
 
-    gcal_ok = push_event_to_gcal(title, date_str, start_time, end_time, all_day)
-    if gcal_ok:
-        return True
-
-    logging.info("GCal push unavailable or failed; attempting fallback to Radicale CalDAV...")
-    radicale_ok = push_event_to_radicale(title, date_str, start_time, end_time, all_day)
-    return radicale_ok
+    return push_event_to_gcal(title, date_str, start_time, end_time, all_day)
 
 
 def sync_task(task_dict):
-    """Syncs task to Google Tasks (Primary) with Radicale CalDAV fallback."""
+    """Syncs task to Google Tasks (Primary). Obsidian Markdown remains the local canonical record."""
     title = task_dict.get("title")
     due_date = task_dict.get("due_date")
 
-    gtasks_ok = push_task_to_gtasks(title, due_date)
-    if gtasks_ok:
-        return True
-
-    logging.info("Google Tasks push unavailable or failed; attempting fallback to Radicale CalDAV...")
-    radicale_ok = push_task_to_radicale(title, due_date)
-    return radicale_ok
+    return push_task_to_gtasks(title, due_date)
 
 
 def write_to_inbox(original_filename, detected_lang, original_text, llm_content):

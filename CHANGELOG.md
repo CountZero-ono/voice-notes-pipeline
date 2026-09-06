@@ -3,6 +3,12 @@
 All notable changes to the Voice Notes Pipeline will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [2.3.0] - 2026-09-06
+
+### Removed
+- **Radicale CalDAV Decommissioning:** Retired Radicale CalDAV fallback integration from `voice_harvester.py` and `signal_ingest.py`. Google Calendar & Google Tasks now exclusively handle cloud calendar/task sync, while sovereign Obsidian Markdown files remain the canonical, local source of truth.
+- **Brittle CalDAV Plumbing:** Removed raw HTTP PROPFIND requests, manual `.ics` iCalendar string assembly, and unused CalDAV auth configuration.
+
 ## [2.2.0] - 2026-09-06
 
 ### Added

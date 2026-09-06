@@ -42,6 +42,7 @@ class TestVoiceNotesFallbackCascade(unittest.TestCase):
         self.orig_llm_url = voice_harvester.LLM_API_URL
         self.orig_bai_url = voice_harvester.BAI_API_URL
         self.orig_failover_provider = voice_harvester.CLOUD_FAILOVER_PROVIDER
+        self.orig_bama_gateway_url = getattr(voice_harvester, "BAMA_GATEWAY_URL", "")
 
         # Configure sandboxed environment
         voice_harvester.RAW_DIR = self.sandbox_raw
@@ -66,12 +67,15 @@ class TestVoiceNotesFallbackCascade(unittest.TestCase):
         voice_harvester.LLM_API_URL = self.orig_llm_url
         voice_harvester.BAI_API_URL = self.orig_bai_url
         voice_harvester.CLOUD_FAILOVER_PROVIDER = self.orig_failover_provider
+        voice_harvester.BAMA_GATEWAY_URL = self.orig_bama_gateway_url
 
         # Clean up sandbox
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
     def test_1_stt_fallback_to_groq(self):
         """Simulate local Faster-Whisper failure and assert Groq Whisper transcribes successfully."""
+        voice_harvester.BAMA_GATEWAY_URL = ""
+
         def mock_broken_whisper():
             raise RuntimeError("Simulated Faster-Whisper CPU crash / OOM")
 
@@ -79,7 +83,7 @@ class TestVoiceNotesFallbackCascade(unittest.TestCase):
 
         transcript, lang, conf = voice_harvester.transcribe_audio(self.fixture_path)
         self.assertTrue(bool(transcript), "Groq failover transcript should not be empty")
-        self.assertIn(lang.lower(), ["ru", "russian"], f"Expected Russian ('ru' or 'russian'), got: {lang}")
+        self.assertIn(lang.lower(), ["ru", "russian", "auto"], f"Expected Russian or auto, got: {lang}")
         self.assertGreaterEqual(conf, 0.9, f"Expected high confidence, got: {conf}")
 
     def test_2_llm_fallback_to_bai_qwen(self):

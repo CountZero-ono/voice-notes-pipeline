@@ -45,6 +45,25 @@ ARCHIVE_DIR = os.environ.get("VOICE_ARCHIVE_DIR", "/mnt/RAID5/VoiceNotesArchive/
 LLM_API_URL = os.environ.get("LLM_API_URL", "http://127.0.0.1:1235/v1/chat/completions")  # Port 1235 maps to Qwen 35B
 LLM_MODEL = os.environ.get("LLM_MODEL", "qwen")
 
+# BAMA Unified Inference Gateway Configuration (24/7 routing proxy on Jasper Lake)
+BAMA_GATEWAY_URL = os.environ.get("BAMA_GATEWAY_URL", "http://192.168.1.37:8090/v1")
+
+
+def get_gateway_url():
+    """Resolves active BAMA Gateway URL (environment override, localhost, or Jasper Lake LXC 107)."""
+    env_url = os.environ.get("BAMA_GATEWAY_URL")
+    if env_url:
+        return env_url.rstrip("/")
+    for candidate in ("http://127.0.0.1:8090/v1", "http://192.168.1.37:8090/v1"):
+        try:
+            r = requests.get(f"{candidate}/health", timeout=0.3)
+            if r.status_code == 200:
+                return candidate
+        except Exception:
+            pass
+    return "http://192.168.1.37:8090/v1"
+
+
 # Cloud Failover Configuration ("qwen_cloud", "vertex", or "none")
 CLOUD_FAILOVER_PROVIDER = os.environ.get("VOICE_CLOUD_FAILOVER", "qwen_cloud").lower()
 BAI_API_URL = os.environ.get("BAI_API_URL", "https://api.b.ai/v1/chat/completions")
@@ -255,10 +274,31 @@ def transcribe_audio_groq(filepath):
 
 
 def transcribe_audio(filepath):
-    """Transcribes audio file using Faster-Whisper with Groq Cloud failover."""
+    """Transcribes audio file using BAMA Unified Gateway with local Faster-Whisper and Groq fallback."""
     raw_transcript = ""
     detected_lang = "unknown"
     confidence = 0.0
+
+    # Tier 0: BAMA Unified Inference Gateway (Primary 24/7 cascading STT proxy)
+    gateway_url = get_gateway_url()
+    try:
+        url = f"{gateway_url.rstrip('/')}/audio/transcriptions"
+        logging.info(f"Transcribing audio via BAMA Gateway ({url}): {filepath}")
+        with open(filepath, "rb") as f:
+            files = {"file": (os.path.basename(filepath), f)}
+            data = {"model": "whisper-1"}
+            resp = requests.post(url, files=files, data=data, timeout=60)
+            if resp.status_code == 200:
+                res_json = resp.json()
+                raw_transcript = res_json.get("text", "").strip()
+                detected_lang = res_json.get("language", "unknown")
+                confidence = 0.95
+                tier_used = res_json.get("tier_used", "gateway")
+                logging.info(f"BAMA Gateway ASR complete via {tier_used}. Language: {detected_lang}")
+                if raw_transcript:
+                    return raw_transcript, detected_lang, confidence
+    except Exception as e:
+        logging.warning(f"BAMA Gateway STT unavailable or failed ({e}). Attempting local fallback...")
 
     # Tier 1: Local Faster-Whisper
     try:
@@ -287,9 +327,9 @@ def transcribe_audio(filepath):
 
 
 def clean_and_extract_llm(raw_text, max_retries=3, initial_backoff=2):
-    """Sends transcript to local Qwen 35B LLM with exponential backoff."""
+    """Sends transcript to BAMA Unified Inference Gateway for multi-tier cascading LLM distillation."""
     if DRY_RUN:
-        logging.info(f"[DRY RUN] Simulating LLM request to {LLM_API_URL}...")
+        logging.info(f"[DRY RUN] Simulating LLM request to {BAMA_GATEWAY_URL}...")
         today_str = datetime.now().strftime("%Y-%m-%d")
         categories = ["life"]
         raw_lower = raw_text.lower()
@@ -355,26 +395,40 @@ def clean_and_extract_llm(raw_text, max_retries=3, initial_backoff=2):
         "messages": messages,
         "temperature": 0.1,
         "max_tokens": 1200,
-        "chat_template_kwargs": {"enable_thinking": False},
-        "thinking_budget_tokens": 0,
         "stream": False
     }
 
+    # Primary: BAMA Unified Inference Gateway
+    gateway_url = get_gateway_url()
     backoff = initial_backoff
     for attempt in range(1, max_retries + 1):
         try:
-            logging.info(f"Sending transcript to local LLM at {LLM_API_URL} (attempt {attempt}/{max_retries})...")
-            response = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=30)
-            response.raise_for_status()
-            res_json = response.json()
-            llm_output = res_json['choices'][0]['message']['content']
-            logging.info("Local LLM response received successfully.")
-            return llm_output
+            url = f"{gateway_url.rstrip('/')}/chat/completions"
+            logging.info(f"Sending transcript to BAMA Gateway ({url}) (attempt {attempt}/{max_retries})...")
+            response = requests.post(url, headers=headers, json=payload, timeout=60)
+            if response.status_code == 200:
+                res_json = response.json()
+                llm_output = res_json['choices'][0]['message']['content']
+                tier_used = res_json.get('_gateway_tier', 'gateway')
+                logging.info(f"BAMA Gateway LLM response received successfully via {tier_used}.")
+                return llm_output
         except Exception as e:
-            logging.warning(f"Local LLM request attempt {attempt} failed: {e}")
+            logging.warning(f"BAMA Gateway LLM request attempt {attempt} failed: {e}")
             if attempt < max_retries:
                 time.sleep(backoff)
                 backoff *= 2
+
+    # Direct local/cloud fallback if gateway fails
+    logging.warning("BAMA Gateway unreachable. Cascading to direct LLM backends...")
+    try:
+        response = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=30)
+        if response.status_code == 200:
+            res_json = response.json()
+            llm_output = res_json['choices'][0]['message']['content']
+            logging.info("Direct local LLM response received successfully.")
+            return llm_output
+    except Exception as e:
+        logging.warning(f"Direct local LLM failed: {e}")
 
     # Tier-2/Tier-3 Failover Cascade
     if CLOUD_FAILOVER_PROVIDER == "qwen_cloud":

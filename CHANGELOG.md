@@ -3,6 +3,13 @@
 All notable changes to the Voice Notes Pipeline will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [2.2.0] - 2026-09-06
+
+### Planned / Architecture Migration
+- **Decoupling to Flatline Gateway:** Roadmapped transition from embedded model execution to the 24/7 `flatline-gateway` (`http://flatline-gateway:8090/v1`) on Jasper Lake (`virtsrv2` / LXC 107).
+- **24/7 Mobile Ingestion:** Moving the Signal ingestion daemon from the mortal SER7 workstation to `virtsrv2` to achieve genuine 24/7 real-time voice note capture, calendar scheduling, and task sync even when SER7 is powered down.
+- **Client Slimming:** Strips local `faster-whisper` C-bindings and raw LLM driver code from `voice_harvester.py`, refocusing the daemon purely on note categorization, Obsidian frontmatter, and Google Calendar sync.
+
 ## [2.1.0] - 2026-09-06
 
 ### Added

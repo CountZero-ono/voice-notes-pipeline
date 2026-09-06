@@ -21,6 +21,9 @@ import uuid
 import re
 import yaml
 from filelock import FileLock
+import seafile_sync
+
+seafile_client = seafile_sync.default_client
 
 # Configure Logging with Rotation
 LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "harvester.log")
@@ -818,6 +821,13 @@ def write_to_inbox(original_filename, detected_lang, original_text, llm_content)
         with FileLock(lock_path, timeout=10):
             atomic_write(dest["full_path"], note_content)
 
+        # Sync to remote Seafile Obsidian Vault
+        try:
+            folder = dest["category"].capitalize()
+            seafile_client.upload_note(folder, output_filename, note_content)
+        except Exception as e:
+            logging.error(f"Failed to sync note to Seafile ({dest['category']}): {e}")
+
     logging.info(f"Saved note copies to {[d['display_path'] for d in destinations]} (Categories: {categories})")
     return [d["full_path"] for d in destinations]
 
@@ -878,6 +888,11 @@ def check_and_sync_approved_notes():
                         new_content = f"---\n{new_yaml}---\n{body.lstrip()}"
                         atomic_write(filepath, new_content)
                         logging.info(f"Successfully updated note status to 'synced' for: {filepath}")
+                        try:
+                            cat_folder = os.path.basename(os.path.dirname(filepath))
+                            seafile_client.update_note(cat_folder, os.path.basename(filepath), new_content)
+                        except Exception as e:
+                            logging.error(f"Failed to sync updated note to Seafile: {e}")
                     else:
                         logging.warning(f"Note sync incomplete. Status remains 'approved' for retry: {filepath}")
 

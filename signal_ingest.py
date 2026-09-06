@@ -23,6 +23,9 @@ import websockets
 import yaml
 from filelock import FileLock
 import voice_harvester
+import seafile_sync
+
+seafile_client = seafile_sync.default_client
 
 # Configure Logging with Rotation
 LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "harvester.log")
@@ -217,6 +220,12 @@ def handle_text_command(sender, text_msg, quote=None):
             new_content = f"---\n{new_yaml}---\n{body.lstrip()}"
             voice_harvester.atomic_write(note_path, new_content)
 
+        try:
+            cat_folder = os.path.basename(os.path.dirname(note_path))
+            seafile_client.update_note(cat_folder, os.path.basename(note_path), new_content)
+        except Exception as e:
+            logging.error(f"Failed to sync rejection to Seafile: {e}")
+
         send_signal_message(sender, f"❌ Rejected appointment '{title}'. Marked as rejected in Obsidian.")
         return
 
@@ -340,7 +349,10 @@ def process_signal_envelope(envelope, loop):
 
 async def listen_signal_websocket():
     """Asynchronous WebSocket listener for Signal messages."""
-    ws_url = f"ws://127.0.0.1:8080/v1/receive/{SIGNAL_PHONE_NUMBER}"
+    parsed = urlparse(SIGNAL_API_URL)
+    ws_scheme = "wss" if parsed.scheme == "https" else "ws"
+    ws_host = parsed.netloc or "127.0.0.1:8080"
+    ws_url = f"{ws_scheme}://{ws_host}/v1/receive/{SIGNAL_PHONE_NUMBER}"
     logging.info(f"Connecting to Signal WebSocket at {ws_url}...")
     loop = asyncio.get_running_loop()
 

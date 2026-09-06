@@ -29,18 +29,18 @@ Implement a multi-tier, high-availability architecture for `voice-notes-pipeline
 
 ---
 
-## Progress & Status (Updated 2026-09-01)
+## Progress & Status (Updated 2026-09-06)
 - [x] **Tier 1 Optimization:** Removed DRY sampling flags from `llama-qwen-mtp.service` and upgraded to `-np 2` slots with unified KV cache.
 - [x] **Tier 2 Integration:** Integrated Vertex AI Gemini 3.7 Flash cloud failover into `voice_harvester.py`.
 - [x] **Tier 3 Dead-Letter:** Implemented raw Whisper transcript fallback to `Inbox/Life/` with `#dead-letter` if all LLMs are unreachable.
 - [x] **Distillation Shootout:** Completed trilingual benchmark between Local Qwen 35B and Vertex AI Gemini 3.7 Flash (`tests/benchmark_distillation.py`). Results documented in `distillation_benchmark_report.md`.
+- [x] **Groq Whisper STT Failover (2026-09-06):** Implemented `transcribe_audio_groq` in `voice_harvester.py` with cached API keys, size-guards (<1KB), 429 rate-limit retries, and live verified on Russian audio sample (`tests/fixtures/20260712_103726.m4a`).
+- [x] **Muse-Glimmer A-to-Z Audit Remediation (2026-09-06):** Fixed Google Calendar all-day event exclusive end date bug (`date + 1 day`) and infinite retry loop on corrupt/empty audio.
 
 ---
 
 ## Remaining Tasks for Next Session
-1. **Groq Whisper STT Failover:**
-   - Integrate Groq Cloud Whisper API fallback into `voice_harvester.py` if local `faster-whisper` fails or hangs.
-2. **Tier 3 Persistent Queue:**
+1. **Tier 3 Persistent Queue:**
    - Implement persistent queue auto-drain loop on workstation wake-up.
-3. **Downstream Rollout (Prompt Distiller):**
+2. **Downstream Rollout (Prompt Distiller):**
    - Port the dual-provider LLM fallback pattern into `prompt_distiller`.

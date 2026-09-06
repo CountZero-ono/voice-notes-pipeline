@@ -44,11 +44,11 @@ An automated, local, zero-cloud voice-to-thought pipeline that ingests voice mes
 
 ## Directory Structure
 
-* **[voice_harvester.py](file:///home/fuad/OCProjects/voice-notes-pipeline/voice_harvester.py):** Main transcription, categorization, and CalDAV sync engine.
-* **[signal_ingest.py](file:///home/fuad/OCProjects/voice-notes-pipeline/signal_ingest.py):** Real-time WebSocket Signal message listener and interactive command handler.
-* **[system_prompt.md](file:///home/fuad/OCProjects/voice-notes-pipeline/system_prompt.md):** Instruction template for the local LLM post-processing layer.
-* **[backlog/](file:///home/fuad/OCProjects/voice-notes-pipeline/backlog/):** Task queue for backlog automation.
-* **[tests/](file:///home/fuad/OCProjects/voice-notes-pipeline/tests/):** End-to-end integration test suite (`python3 -m unittest discover -s tests`).
+* **[voice_harvester.py](file:///home/fuad/Projects/BAMA/voice-notes-pipeline/voice_harvester.py):** Main transcription, categorization, and CalDAV sync engine.
+* **[signal_ingest.py](file:///home/fuad/Projects/BAMA/voice-notes-pipeline/signal_ingest.py):** Real-time WebSocket Signal message listener and interactive command handler.
+* **[system_prompt.md](file:///home/fuad/Projects/BAMA/voice-notes-pipeline/system_prompt.md):** Instruction template for the local LLM post-processing layer.
+* **[backlog/](file:///home/fuad/Projects/BAMA/voice-notes-pipeline/backlog/):** Task queue for backlog automation.
+* **[tests/](file:///home/fuad/Projects/BAMA/voice-notes-pipeline/tests/):** End-to-end integration test suite (`python3 -m unittest discover -s tests`).
 
 ---
 

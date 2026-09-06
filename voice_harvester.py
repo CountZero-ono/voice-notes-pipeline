@@ -53,6 +53,8 @@ BAI_MODEL = os.environ.get("BAI_MODEL", "qwen3.8-flash")
 # Whisper Config
 WHISPER_MODEL_NAME = os.environ.get("WHISPER_MODEL", "large-v3-turbo")
 WHISPER_THREADS = int(os.environ.get("WHISPER_THREADS", "4"))
+GROQ_API_URL = os.environ.get("GROQ_API_URL", "https://api.groq.com/openai/v1/audio/transcriptions")
+GROQ_WHISPER_MODEL = os.environ.get("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo")
 
 # Radicale CalDAV Configuration (Fallback)
 RADICALE_CALENDAR_URL = os.environ.get("RADICALE_CALENDAR_URL", "http://192.168.1.30:5232/fuad/64e71687-ed01-f827-c34f-38222fd871f5/")
@@ -171,24 +173,117 @@ def wait_for_file_to_stabilize(filepath, check_interval=2, timeout=60):
     return False
 
 
-def transcribe_audio(filepath):
-    """Transcribes audio file using Whisper."""
-    try:
-        model = load_whisper()
-    except Exception as e:
-        logging.error(f"Cannot transcribe {filepath}: Whisper model not available ({e})")
+_cached_groq_key = None
+
+
+def get_groq_api_key():
+    """Retrieve Groq API key from environment or local .env file (cached)."""
+    global _cached_groq_key
+    if _cached_groq_key:
+        return _cached_groq_key
+
+    key = os.environ.get("GROQ_API_KEY")
+    if key:
+        _cached_groq_key = key.strip()
+        return _cached_groq_key
+
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if os.path.exists(env_path):
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("GROQ_API_KEY="):
+                        val = line.split("=", 1)[1].split("#")[0].strip().strip('"').strip("'")
+                        if val:
+                            _cached_groq_key = val
+                            return _cached_groq_key
+        except Exception as e:
+            logging.debug(f"Error reading {env_path}: {e}")
+    return None
+
+
+def transcribe_audio_groq(filepath):
+    """Tier-2 STT Failover: Transcribes audio file using Groq Cloud Whisper API."""
+    api_key = get_groq_api_key()
+    if not api_key:
+        logging.warning("Groq API key not found in env (GROQ_API_KEY) or .env; skipping Groq STT failover.")
         return "", "unknown", 0.0
 
-    logging.info(f"Transcribing audio: {filepath}")
     try:
-        segments, info = model.transcribe(filepath, beam_size=5)
-        raw_text_parts = [segment.text for segment in segments]
-        raw_transcript = " ".join(raw_text_parts).strip()
-        logging.info(f"ASR complete. Language detected: {info.language} ({info.language_probability:.2f})")
-        return raw_transcript, info.language, info.language_probability
-    except Exception as e:
-        logging.error(f"Transcription error for {filepath}: {e}")
+        file_size = os.path.getsize(filepath)
+        if file_size < 1024:
+            logging.warning(f"Audio file is too small ({file_size} bytes): {filepath}. Skipping Groq STT.")
+            return "", "unknown", 0.0
+    except OSError:
         return "", "unknown", 0.0
+
+    headers = {
+        "Authorization": f"Bearer {api_key}"
+    }
+
+    max_retries = 2
+    for attempt in range(1, max_retries + 1):
+        try:
+            logging.info(f"Attempting Tier-2 Groq Whisper transcription (attempt {attempt}/{max_retries}) for: {filepath}")
+            with open(filepath, "rb") as f:
+                files = {
+                    "file": (os.path.basename(filepath), f)
+                }
+                data = {
+                    "model": GROQ_WHISPER_MODEL,
+                    "response_format": "verbose_json"
+                }
+                resp = requests.post(GROQ_API_URL, headers=headers, files=files, data=data, timeout=25)
+                if resp.status_code == 429:
+                    logging.warning("Groq API rate limited (429). Retrying in 2s...")
+                    time.sleep(2)
+                    continue
+                resp.raise_for_status()
+                res_json = resp.json()
+
+                raw_transcript = res_json.get("text", "").strip()
+                detected_lang = res_json.get("language", "unknown")
+                logging.info(f"Groq ASR complete. Detected language: {detected_lang}")
+                return raw_transcript, detected_lang, 0.95
+        except Exception as e:
+            logging.error(f"Groq Whisper attempt {attempt} failed for {filepath}: {e}")
+            if attempt < max_retries:
+                time.sleep(2)
+
+    return "", "unknown", 0.0
+
+
+def transcribe_audio(filepath):
+    """Transcribes audio file using Faster-Whisper with Groq Cloud failover."""
+    raw_transcript = ""
+    detected_lang = "unknown"
+    confidence = 0.0
+
+    # Tier 1: Local Faster-Whisper
+    try:
+        model = load_whisper()
+        if model:
+            logging.info(f"Transcribing audio with local Whisper: {filepath}")
+            segments, info = model.transcribe(filepath, beam_size=5)
+            raw_text_parts = [segment.text for segment in segments]
+            raw_transcript = " ".join(raw_text_parts).strip()
+            detected_lang = info.language
+            confidence = info.language_probability
+            logging.info(f"Local ASR complete. Language detected: {detected_lang} ({confidence:.2f})")
+            if raw_transcript:
+                return raw_transcript, detected_lang, confidence
+    except Exception as e:
+        logging.warning(f"Local Whisper transcription failed for {filepath}: {e}")
+
+    # Tier 2: Groq Cloud Whisper API Failover
+    logging.warning(f"Initiating Tier-2 STT Cloud Failover to Groq Whisper for {filepath}...")
+    raw_transcript, detected_lang, confidence = transcribe_audio_groq(filepath)
+    if raw_transcript:
+        return raw_transcript, detected_lang, confidence
+
+    logging.error(f"All STT tiers failed for {filepath}.")
+    return "", "unknown", 0.0
 
 
 def clean_and_extract_llm(raw_text, max_retries=3, initial_backoff=2):
@@ -339,6 +434,7 @@ def extract_llm_cloud_qwen(messages):
         "messages": messages,
         "temperature": 0.1,
         "max_tokens": 1200,
+        "chat_template_kwargs": {"reasoning_effort": "low"},
         "stream": False
     }
     try:
@@ -355,21 +451,13 @@ def extract_llm_cloud_qwen(messages):
 
 
 def extract_llm_vertex_gemini(messages):
-    """Tier-2 Cloud Failover: calls Gemini 2.5 Flash via Vertex AI."""
+    """Tier-3 Cloud Failover: calls Gemini 3.7 Flash via Vertex AI."""
     try:
         import google.auth
         from google.auth.transport.requests import Request
         project_id = os.environ.get("VERTEX_PROJECT_ID", "project-a4472335-7c7d-4369-8b4")
         creds, _ = google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])
         creds.refresh(Request())
-
-        system_instruction = ""
-        user_prompt = ""
-        for m in messages:
-            if m.get("role") == "system":
-                system_instruction = m.get("content", "")
-            elif m.get("role") == "user":
-                user_prompt = m.get("content", "")
 
         url = f"https://aiplatform.googleapis.com/v1beta1/projects/{project_id}/locations/global/endpoints/openapi/chat/completions"
         headers = {
@@ -648,8 +736,13 @@ def push_event_to_gcal(title, date_str, start_time=None, end_time=None, all_day=
         service = build('calendar', 'v3', credentials=creds)
 
         if all_day or not start_time:
+            # Google Calendar all-day events require an exclusive end date (date + 1 day)
             start_body = {'date': date_str}
-            end_body = {'date': date_str}
+            try:
+                next_day = (datetime.strptime(date_str, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+            except Exception:
+                next_day = date_str
+            end_body = {'date': next_day}
         else:
             norm_start = normalize_time_str(start_time)[:5]
             start_iso = f"{date_str}T{norm_start}:00"
@@ -929,7 +1022,7 @@ def process_file(filepath):
             f"categories:\n"
             f"  - life\n"
             f"title: \"Voice Note: {os.path.splitext(filename)[0]}\"\n"
-            f"status: pending\n"
+            f"status: dead-letter\n"
             f"tags:\n"
             f"  - voicenote\n"
             f"  - inbox\n"
@@ -999,7 +1092,20 @@ def monitor_loop():
                 save_state(state)
                 logging.info(f"Successfully processed and recorded state for: {filename}")
             else:
-                logging.error(f"Failed processing file: {filename}. It will be retried.")
+                retry_count = state.get(filename, {}).get("retries", 0) + 1
+                state[filename] = {
+                    "size": size,
+                    "mtime": mtime,
+                    "retries": retry_count,
+                    "last_attempt": datetime.now().isoformat()
+                }
+                if retry_count >= 3:
+                    logging.error(f"Max retries (3) reached for {filename}. Moving to dead-letter archive.")
+                    archive_file(filepath)
+                    state[filename]["status"] = "dead_letter"
+                else:
+                    logging.warning(f"Processing attempt {retry_count}/3 failed for {filename}. Will retry.")
+                save_state(state)
 
         check_and_sync_approved_notes()
         time.sleep(5)

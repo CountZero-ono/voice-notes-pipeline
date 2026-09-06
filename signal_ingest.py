@@ -305,7 +305,7 @@ def process_signal_envelope(envelope, loop):
     if source and not is_my_number(source):
         return
 
-    sender = SIGNAL_PHONE_NUMBER
+    sender = source or SIGNAL_PHONE_NUMBER
     attachments = data.get("attachments", []) + sync_data.get("attachments", [])
     text_msg = data.get("message") or sync_data.get("message")
     quote = data.get("quote") or sync_data.get("quote")

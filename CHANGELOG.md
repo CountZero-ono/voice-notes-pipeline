@@ -3,6 +3,12 @@
 All notable changes to the Voice Notes Pipeline will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [2.4.0] - 2026-09-08
+
+### Changed
+- **Bare-Metal HP t630 Cutover:** Migrated 24/7 `voice-notes-worker` daemon and Signal WebSocket ingest from Jasper Lake LXC 107 (`virtsrv2`) to dedicated bare-metal HP t630 Thin Client (`bama`, `192.168.1.37`).
+- **90/10 Fast Path Integration:** Verified live sub-3-second end-to-end phone dictation turnaround via Groq Cloud Whisper (~350–650ms) and b.ai Cloud Qwen Flash (~800ms) with Seafile REST vault sync to Obsidian and direct Google Calendar/Tasks push.
+
 ## [2.3.0] - 2026-09-06
 
 ### Removed

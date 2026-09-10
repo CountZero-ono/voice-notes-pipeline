@@ -145,7 +145,7 @@ def parse_note_details(content):
 
 
 def get_pending_appointment_notes():
-    """Scans INBOX_DIR for notes with pending status."""
+    """Scans INBOX_DIR for notes with pending status specifically in appointments category."""
     if not os.path.exists(INBOX_DIR):
         return []
     pending_notes = []
@@ -157,13 +157,84 @@ def get_pending_appointment_notes():
                     with open(full_path, "r", encoding="utf-8") as f:
                         content = f.read()
                     fm, _ = voice_harvester.extract_frontmatter_and_body(content)
-                    if str(fm.get("status", "")).strip().lower() == "pending":
+                    cats = fm.get("categories", [])
+                    if isinstance(cats, str):
+                        cats = [cats]
+                    if "appointments" in cats and str(fm.get("status", "")).strip().lower() == "pending":
                         mtime = os.path.getmtime(full_path)
                         pending_notes.append((mtime, full_path, content))
                 except Exception:
                     pass
     pending_notes.sort(key=lambda x: x[0], reverse=True)
     return pending_notes
+
+
+def get_target_pending_agent_note():
+    """Finds latest pending agent note in AgentBacklog folder."""
+    agent_dir = os.path.join(INBOX_DIR, "AgentBacklog")
+    if not os.path.exists(agent_dir):
+        return None
+    agent_notes = []
+    for file in os.listdir(agent_dir):
+        if file.endswith(".md"):
+            full_path = os.path.join(agent_dir, file)
+            try:
+                with open(full_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                fm, _ = voice_harvester.extract_frontmatter_and_body(content)
+                if str(fm.get("status", "")).strip().lower() == "pending":
+                    mtime = os.path.getmtime(full_path)
+                    agent_notes.append((mtime, full_path, content))
+            except Exception:
+                pass
+    if not agent_notes:
+        return None
+    agent_notes.sort(key=lambda x: x[0], reverse=True)
+    return agent_notes[0]
+
+
+def parse_agent_note_details(content):
+    """Extracts target and action from agent note body."""
+    target = "General Homelab"
+    action = "Agent task recorded"
+    lines = content.splitlines()
+    for i, line in enumerate(lines):
+        line_s = line.strip()
+        if line_s.startswith("# Target / Context") and i + 1 < len(lines):
+            for next_line in lines[i+1:]:
+                nl_s = next_line.strip()
+                if nl_s.startswith("#"):
+                    break
+                if nl_s:
+                    target = nl_s
+                    break
+        elif line_s.startswith("# Requested Agent Action") and i + 1 < len(lines):
+            for next_line in lines[i+1:]:
+                nl_s = next_line.strip()
+                if nl_s.startswith("#"):
+                    break
+                if nl_s:
+                    action = nl_s
+                    break
+    return target, action
+
+
+def parse_spoken_time(text):
+    """Parses time from spoken text (e.g. '15:30', '3pm', '3:30 pm')."""
+    match = re.search(r'\b([0-1]?[0-9]|2[0-3]):([0-5][0-9])\b', text)
+    if match:
+        return match.group(0)
+    match_ampm = re.search(r'\b(1[0-2]|[1-9])(?::([0-5][0-9]))?\s*(am|pm)\b', text)
+    if match_ampm:
+        hour = int(match_ampm.group(1))
+        minute = match_ampm.group(2) or "00"
+        ampm = match_ampm.group(3)
+        if ampm == "pm" and hour < 12:
+            hour += 12
+        elif ampm == "am" and hour == 12:
+            hour = 0
+        return f"{hour:02d}:{minute}"
+    return None
 
 
 def get_target_pending_appointment_note(quote=None):
@@ -188,65 +259,61 @@ def get_target_pending_appointment_note(quote=None):
 def handle_text_command(sender, text_msg, quote=None):
     """Processes interactive approval/rejection/rescheduling text commands."""
     cmd = text_msg.strip().lower()
-    target = get_target_pending_appointment_note(quote=quote)
+    latest = get_target_pending_appointment_note(quote)
 
-    if not target:
-        if any(w in cmd for w in ("approve", "yes", "reject", "no", "reschedule")):
-            send_signal_message(sender, "ℹ️ No pending appointments found in Obsidian Inbox.")
+    if not latest:
+        send_signal_message(sender, "ℹ️ No pending appointments found to process.")
         return
 
-    _, note_path, content = target
+    mtime, note_path, content = latest
     fm, body = voice_harvester.extract_frontmatter_and_body(content)
     title, date_val, time_val = parse_note_details(content)
-    lock_path = f"{note_path}.lock"
 
-    # 1. APPROVE COMMAND
-    if cmd in ("approve", "yes", "y", "ok", "confirm", "synced"):
-        with FileLock(lock_path, timeout=5):
-            fm["status"] = "approved"
-            new_yaml = yaml.safe_dump(fm, sort_keys=False, allow_unicode=True)
-            new_content = f"---\n{new_yaml}---\n{body.lstrip()}"
+    if cmd in ("approve", "yes", "y", "да"):
+        fm["status"] = "approved"
+        new_yaml = yaml.safe_dump(fm, sort_keys=False, allow_unicode=True)
+        new_content = f"---\n{new_yaml}---\n{body.lstrip()}"
+        with FileLock(f"{note_path}.lock", timeout=10):
             voice_harvester.atomic_write(note_path, new_content)
-
+        seafile_client.update_note("Appointments", os.path.basename(note_path), new_content)
         voice_harvester.check_and_sync_approved_notes()
-        send_signal_message(sender, f"✅ Approved! Synced '{title}' ({date_val} @ {time_val}) to Calendar & Tasks.")
+        send_signal_message(sender, f"✅ Confirmed & Synced: '{title}' for {date_val} @ {time_val}")
         return
 
-    # 2. REJECT COMMAND
-    if cmd in ("reject", "no", "n", "cancel"):
-        with FileLock(lock_path, timeout=5):
-            fm["status"] = "rejected"
-            new_yaml = yaml.safe_dump(fm, sort_keys=False, allow_unicode=True)
-            new_content = f"---\n{new_yaml}---\n{body.lstrip()}"
+    if cmd in ("reject", "no", "n", "нет", "cancel", "отмена"):
+        fm["status"] = "rejected"
+        new_yaml = yaml.safe_dump(fm, sort_keys=False, allow_unicode=True)
+        new_content = f"---\n{new_yaml}---\n{body.lstrip()}"
+        with FileLock(f"{note_path}.lock", timeout=10):
             voice_harvester.atomic_write(note_path, new_content)
-
-        try:
-            cat_folder = os.path.basename(os.path.dirname(note_path))
-            seafile_client.update_note(cat_folder, os.path.basename(note_path), new_content)
-        except Exception as e:
-            logging.error(f"Failed to sync rejection to Seafile: {e}")
-
-        send_signal_message(sender, f"❌ Rejected appointment '{title}'. Marked as rejected in Obsidian.")
+        seafile_client.update_note("Appointments", os.path.basename(note_path), new_content)
+        send_signal_message(sender, f"❌ Cancelled appointment: '{title}'")
         return
 
-    # 3. RESCHEDULE COMMAND (e.g. "15:30" or "reschedule 15:30")
-    time_match = re.search(r'\b([0-1]?[0-9]|2[0-3]):[0-5][0-9]\b', cmd)
-    if time_match or "reschedule" in cmd:
-        new_time = time_match.group(0) if time_match else "15:00"
-        with FileLock(lock_path, timeout=5):
-            fm["startTime"] = new_time
-            fm["status"] = "approved"
-            new_yaml = yaml.safe_dump(fm, sort_keys=False, allow_unicode=True)
-            new_content = f"---\n{new_yaml}---\n{body.lstrip()}"
+    # Check for direct time change (e.g. '15:30' or '3pm')
+    new_time = parse_spoken_time(cmd)
+    if new_time:
+        fm["status"] = "approved"
+        fm["startTime"] = new_time
+        fm["allDay"] = False
+        new_yaml = yaml.safe_dump(fm, sort_keys=False, allow_unicode=True)
+        new_content = f"---\n{new_yaml}---\n{body.lstrip()}"
+        with FileLock(f"{note_path}.lock", timeout=10):
             voice_harvester.atomic_write(note_path, new_content)
-
+        seafile_client.update_note("Appointments", os.path.basename(note_path), new_content)
         voice_harvester.check_and_sync_approved_notes()
-        send_signal_message(sender, f"📅 Rescheduled '{title}' to {new_time} ({date_val}) & synced to Calendar & Tasks!")
+        send_signal_message(sender, f"🕒 Rescheduled & Synced: '{title}' to {date_val} @ {new_time}")
         return
 
+    send_signal_message(
+        sender,
+        f"❓ Command not understood for pending appointment '{title}'.\nReply 'approve', 'reject', or a new time (e.g. '16:00')."
+    )
 
-def process_audio_attachment_sync(att_id, sender):
-    """Worker task for downloading, transcribing, and processing audio without blocking event loop."""
+
+def process_incoming_voice_note(att_id, sender):
+    """Worker task: downloads audio attachment, triggers harvester, and sends confirmation."""
+    logger.info(f"Downloading attachment ID {att_id}...")
     filepath = download_attachment(att_id)
     if not filepath:
         if sender:
@@ -255,9 +322,12 @@ def process_audio_attachment_sync(att_id, sender):
 
     success = voice_harvester.process_file(filepath)
     if success is True:
-        latest = get_target_pending_appointment_note()
-        if latest:
-            _, _, content = latest
+        latest_appt = get_target_pending_appointment_note()
+        latest_agent = get_target_pending_agent_note()
+
+        # Prioritize appointment prompt if a recent appointment was staged
+        if latest_appt and (time.time() - latest_appt[0] < 60):
+            _, _, content = latest_appt
             title, date_val, time_val = parse_note_details(content)
             conflict_status = check_calendar_conflicts(date_val, time_val)
             reply = (
@@ -269,6 +339,14 @@ def process_audio_attachment_sync(att_id, sender):
                 f"• 'approve' (or 'yes') -> Confirm & sync at {time_val}\n"
                 f"• 'reject' (or 'no') -> Cancel appointment\n"
                 f"• Or type any time (e.g. '16:00') -> Change start time & sync"
+            )
+        elif latest_agent and (time.time() - latest_agent[0] < 60):
+            target, action = parse_agent_note_details(latest_agent[2])
+            reply = (
+                f"🤖 Agent Task Staged in AgentBacklog!\n\n"
+                f"📌 Target: {target}\n"
+                f"⚡ Action: {action}\n\n"
+                f"⏳ Status: pending (queued for AI agent pickup)"
             )
         else:
             reply = "✅ Voice note processed & staged in Obsidian Inbox!"

@@ -15,11 +15,24 @@ Categories definitions:
 1.  **`appointments`**: Any calendar appointments, meetings, tasks, reminders, to-dos, deadlines, or scheduled events.
 2.  **`technical`**: Any programming code, CLI commands, database operations, homelab infrastructure, configuration parameters, hardware specs, network topology, scientific facts, recipes, or formal methods.
 3.  **`life`**: General daily logs, journal entries, feelings, movie reviews, unstructured thoughts, or casual dictation that does not contain scheduling information or technical specifications.
+4.  **`agent`**: Any explicit tasks, bug reports, feature requests, code modifications, or technical instructions intended for AI coding assistants/agents (e.g., requests mentioning "Gemini", "Antigravity", "Claude", "Agent", "Qwen", or dictating specific code fixes, refactors, automation, or backlog tasks).
 
 ---
 
-## Task 2: Trilingual Text Clean-up (All Categories)
-Clean up the raw transcript and convert spoken paragraph break commands into actual newlines. Do not translate the text itself; keep it in the speaker's original language.
+## Task 2: Language Enforcement & Text Clean-up
+
+#### Critical Language Enforcement Rules:
+- **Cleaned Transcript (`# Cleaned Transcript`):** MUST remain strictly in the speaker's original language (Russian, English, or Azerbaijani) without translation.
+- **ALL Extracted Metadata, Summaries & Tasks (EVERYTHING ELSE):** MUST ALWAYS BE WRITTEN IN TECHNICAL ENGLISH.
+  - Frontmatter properties (except event `title` if for a local appointment).
+  - `# Technical Summary`
+  - `# Actionable Next Steps / Investigation Tasks`
+  - `# Extracted Tasks`
+  - `# Problem & Root Cause`
+  - `# Solution & Permanent Takeaways`
+  - `# Key Knowledge & Facts`
+  - `# Requested Agent Action` & `# Actionable Tasks`
+  Even if the user speaks Russian or Azerbaijani, all summaries, problem explanations, technical facts, and task checklists MUST be formulated in crisp, technical English.
 
 #### Paragraph Break Substitution Rules
 Convert the following spoken phrases into actual newlines (`\n` line breaks):
@@ -42,7 +55,7 @@ Generate the output starting with a YAML frontmatter containing the `categories`
 categories:
   - <category1>
   - <category2>  # Optional, if overlapping
-# If technical is in categories, specify resolution status:
+# If technical or agent is in categories, specify resolution status:
 status: <solved | pending>
 # Include the following properties ONLY if category list contains 'appointments' and an event is explicitly scheduled:
 title: "<Event Title>"
@@ -56,27 +69,33 @@ endTime: "<HH:MM>"
 ### Note Body Sections
 
 1.  **If `appointments` is in categories:**
-    *   `# Cleaned Transcript`: Put the cleaned transcript here.
-    *   `# Extracted Tasks`: List the tasks in Obsidian Tasks format: `- [ ] <Task Description> 📅 <YYYY-MM-DD>` (Calculate the date relative to **Today's Reference Date**; omit the date tag if no date is mentioned). If no tasks are present, write "None detected."
+    *   `# Cleaned Transcript`: Put the cleaned transcript here (verbatim in original spoken language).
+    *   `# Extracted Tasks`: List the tasks in Obsidian Tasks format in English: `- [ ] <Task Description in English> 📅 <YYYY-MM-DD>` (Calculate the date relative to **Today's Reference Date**; omit the date tag if no date is mentioned). If no tasks are present, write "None detected."
 
 2.  **If `technical` is in categories:**
     *   **Determine Technical Status:**
         *   **`status: solved`**: The speaker describes an issue that has already been resolved, an established architecture decision, a working configuration change, or a validated benchmark.
         *   **`status: pending`**: The speaker describes an open bug, an active failure, an unanswered question, a feature request, or an investigation in progress.
     *   **If `status: solved`:**
-        *   `# Problem & Root Cause`: Explain the initial problem, error symptoms, or motivation.
-        *   `# Solution & Permanent Takeaways`: Detail the exact technical fix, commands, parameter adjustments, or configuration applied.
-        *   `# Key Knowledge & Facts`: Use bullet points for critical constants, model names, IP addresses, ports, or architectural rules.
+        *   `# Problem & Root Cause`: Explain the initial problem, error symptoms, or motivation (in English).
+        *   `# Solution & Permanent Takeaways`: Detail the exact technical fix, commands, parameter adjustments, or configuration applied (in English).
+        *   `# Key Knowledge & Facts`: Use bullet points for critical constants, model names, IP addresses, ports, or architectural rules (in English).
     *   **If `status: pending`:**
-        *   `# Technical Summary`: Summary of the observed issue, unexpected behavior, or planned work.
-        *   `# Actionable Next Steps / Investigation Tasks`: Formulate tasks as Obsidian tasks: `- [ ] Investigate/Fix <Specific Issue>`.
+        *   `# Technical Summary`: Summary of the observed issue, unexpected behavior, or planned work (in English).
+        *   `# Actionable Next Steps / Investigation Tasks`: Formulate tasks as Obsidian tasks in English: `- [ ] Investigate/Fix <Specific Issue in English>`.
     *   **Obsidian Wikilinks (Technical Only):** Wrap all key software names, hardware nodes, AI models, services, protocols, and core concepts in Obsidian `[[Wikilinks]]` (e.g. `[[Dixie]]`, `[[Vertex API]]`, `[[SER7]]`, `[[virtsrv2]]`, `[[Qdrant]]`, `[[L1 SQLite]]`, `[[Neo4j]]`, `[[Crystallization]]`, `[[Antigravity]]`) so the technical note hooks directly into the Obsidian knowledge graph.
     *   **Domain Vocabulary Awareness:** Note that words like `Crystallization`, `Flatline`, `L1/L2/L3 Memory`, `Hermes`, `MemMachine`, `Whisper`, `Qdrant`, and `Neo4j` are legitimate internal infrastructure terms, not speech-to-text typos.
 
-3.  **If `life` is in categories (and it is the ONLY category):**
+3.  **If `agent` is in categories:**
+    *   **Always set frontmatter:** `status: pending`
+    *   `# Target / Context`: Specify target project, codebase, service, or system (e.g. `[[voice-notes-pipeline]]`, `[[Dixie]]`, `[[BAMA]]`, etc.) in English.
+    *   `# Requested Agent Action`: Clear, actionable explanation in English of what the AI assistant must do.
+    *   `# Actionable Tasks`: List the concrete tasks formatted as Obsidian tasks in English: `- [ ] <Specific implementation or debugging task>`.
+
+4.  **If `life` is in categories (and it is the ONLY category):**
     *   `# Cleaned Transcript`: Put the simple cleaned transcript here. Do not add task logs or knowledge tables.
 
-*Note: If both `appointments` and `technical` are matched, output `# Cleaned Transcript` (with tasks) followed by the appropriate technical status sections.*
+*Note: If both `appointments` and `technical` or `agent` are matched, output `# Cleaned Transcript` (with tasks) followed by the appropriate technical or agent status sections.*
 
 ---
 

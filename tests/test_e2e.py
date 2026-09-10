@@ -156,5 +156,44 @@ Discussion about pipeline.
         loaded = voice_harvester.load_state()
         self.assertEqual(loaded.get("test_audio.m4a", {}).get("size"), 12345)
 
+    def test_agent_backlog_routing(self):
+        sample_agent_llm = """---
+categories:
+  - agent
+  - technical
+status: pending
+---
+# Target / Context
+[[voice-notes-pipeline]]
+
+# Requested Agent Action
+Fix Russian extraction regression by enforcing English in system prompt.
+
+# Actionable Tasks
+- [ ] Update system prompt
+- [ ] Verify test suite
+"""
+        cats = voice_harvester.parse_categories_from_llm(sample_agent_llm)
+        self.assertIn("agent", cats)
+        self.assertIn("technical", cats)
+
+        created_files = voice_harvester.write_to_inbox(
+            "test_agent_note.ogg",
+            "ru (99%)",
+            "Gemini поправь русскую экстракцию",
+            sample_agent_llm
+        )
+        self.assertEqual(len(created_files), 2)
+
+        # Verify AgentBacklog copy exists and has pending status + agent-backlog tag
+        agent_copy = [f for f in created_files if "AgentBacklog" in f]
+        self.assertEqual(len(agent_copy), 1)
+        with open(agent_copy[0], "r", encoding="utf-8") as f:
+            content = f.read()
+        fm, body = voice_harvester.extract_frontmatter_and_body(content)
+        self.assertEqual(fm.get("status"), "pending")
+        self.assertIn("agent-backlog", fm.get("tags", []))
+        self.assertIn("voice-notes-pipeline", body)
+
 if __name__ == "__main__":
     unittest.main()

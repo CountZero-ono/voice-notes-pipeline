@@ -565,7 +565,7 @@ def parse_categories_from_llm(llm_content):
     for c in raw_cats:
         if isinstance(c, str):
             c_clean = c.strip().lower()
-            if c_clean in ("appointments", "technical", "life") and c_clean not in valid_cats:
+            if c_clean in ("appointments", "technical", "life", "agent") and c_clean not in valid_cats:
                 valid_cats.append(c_clean)
 
     return valid_cats if valid_cats else ["life"]
@@ -768,14 +768,22 @@ def write_to_inbox(original_filename, detected_lang, original_text, llm_content)
     base_name, _ = os.path.splitext(original_filename)
     output_filename = f"VoiceNote-{timestamp}.md"
 
+    category_folder_map = {
+        "appointments": "Appointments",
+        "technical": "Technical",
+        "life": "Life",
+        "agent": "AgentBacklog",
+    }
+
     destinations = []
     for cat in categories:
-        folder = cat.capitalize()
+        folder = category_folder_map.get(cat, cat.capitalize())
         target_dir = os.path.join(INBOX_DIR, folder)
         full_path = os.path.join(target_dir, output_filename)
         wiki_link = f"VoiceNotes/Inbox/{folder}/{output_filename[:-3]}"
         destinations.append({
             "category": cat,
+            "folder": folder,
             "full_path": full_path,
             "wiki_link": wiki_link,
             "display_path": f"Inbox/{folder}/{output_filename}"
@@ -793,8 +801,10 @@ def write_to_inbox(original_filename, detected_lang, original_text, llm_content)
         if "tags" not in yaml_data:
             yaml_data["tags"] = ["voicenote", "inbox"]
 
-        if "appointments" in categories:
+        if "appointments" in categories or "agent" in categories:
             yaml_data["status"] = "pending"
+        if "agent" in categories and "agent-backlog" not in yaml_data["tags"]:
+            yaml_data["tags"].append("agent-backlog")
 
         siblings = [d["display_path"] for d in destinations if d != dest]
         if siblings:
@@ -823,7 +833,7 @@ def write_to_inbox(original_filename, detected_lang, original_text, llm_content)
 
         # Sync to remote Seafile Obsidian Vault
         try:
-            folder = dest["category"].capitalize()
+            folder = dest.get("folder", dest["category"].capitalize())
             seafile_client.upload_note(folder, output_filename, note_content)
         except Exception as e:
             logging.error(f"Failed to sync note to Seafile ({dest['category']}): {e}")

@@ -3,6 +3,20 @@
 All notable changes to the Voice Notes Pipeline will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [2.5.0] - 2026-09-11
+
+### Added
+- **Option 1 Autonomous Agent Queue (`AgentBacklog`):**
+  - Added `agent` category to `system_prompt.md` and whitelist in `voice_harvester.py` for voice notes intended for AI coding assistants/agents ("Gemini", "Antigravity", "Claude", etc.).
+  - Added dedicated routing to `/VoiceNotes/Inbox/AgentBacklog/` with frontmatter `status: pending` and tag `agent-backlog`.
+  - Added Seafile REST sync for `AgentBacklog` notes directly into remote Seafile vault.
+  - Added distinct Signal completion alert: `🤖 Agent Task Staged in AgentBacklog! (Status: pending)` with extracted target and action summary.
+  - Updated `.antigravity.md` workspace behavior to proactively sweep `/home/fuad/Seafile/Obsidian Vaults/VoiceNotes/Inbox/AgentBacklog/` for pending tasks on session startup.
+
+### Fixed
+- **Language Extraction Enforcement:** Enforced strict language boundary rules in `system_prompt.md`. While `# Cleaned Transcript` preserves the verbatim spoken tongue (Russian, Azerbaijani, English), all extracted summaries, tasks, problem statements, and key facts are now strictly forced into technical English across all model tiers.
+- **BAMA Gateway Local-First Routing:** Switched `LLM_PRIMARY=local` on `bama-gateway` (HP t630, `192.168.1.37`), prioritizing sovereign SER7 Local Qwen 35B whenever the workstation is online with ultra-fast 250ms TCP failover to b.ai Cloud Qwen / Vertex Gemini when SER7 is powered off.
+
 ## [2.4.0] - 2026-09-08
 
 ### Changed

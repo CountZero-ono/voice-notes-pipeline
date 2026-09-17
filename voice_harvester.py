@@ -552,8 +552,21 @@ def extract_frontmatter_and_body(markdown_text):
         return {}, body
 
 
-def parse_categories_from_llm(llm_content):
-    """Extracts unique category list from LLM output."""
+# Matches opening greetings/fillers followed immediately by an AI agent's name
+AGENT_INVOCATION_REGEX = re.compile(
+    r'^\s*(?:(?:hey|hi|hello|ok|okay|so|эй|привет|так|ну|слушай)\b[\s,.:-]*){0,2}'
+    r'\b(gemini|antigravity|claude|agent|dixie|qwen|gwen|джемини|гемини|антигравити|клод|агент|дикси|квен)\b',
+    re.IGNORECASE
+)
+
+
+def parse_categories_from_llm(llm_content, original_text=None):
+    """
+    Extracts unique category list from LLM output with deterministic safeguards:
+    1. Tags check: If 'agent' or 'agent-backlog' is in frontmatter tags, enforce 'agent'.
+    2. Invocational Lead check: If original_text starts with an agent's name, enforce 'agent' (Call to Action).
+    3. Exclusivity: If 'agent' is active, strip 'life' so tasks are never buried in personal life logs.
+    """
     fm, _ = extract_frontmatter_and_body(llm_content)
     raw_cats = fm.get("categories", [])
     if isinstance(raw_cats, str):
@@ -567,6 +580,26 @@ def parse_categories_from_llm(llm_content):
             c_clean = c.strip().lower()
             if c_clean in ("appointments", "technical", "life", "agent") and c_clean not in valid_cats:
                 valid_cats.append(c_clean)
+
+    # 1. Frontmatter Tag Inspection: honor manual or LLM tags
+    tags = fm.get("tags", [])
+    if isinstance(tags, str):
+        tags = [tags]
+    elif not isinstance(tags, list):
+        tags = []
+    tag_names = [str(t).strip().lower().lstrip("#") for t in tags]
+    if ("agent" in tag_names or "agent-backlog" in tag_names) and "agent" not in valid_cats:
+        valid_cats.append("agent")
+
+    # 2. Invocational Lead: Did the speaker directly address an agent at the very beginning?
+    if original_text and isinstance(original_text, str):
+        if AGENT_INVOCATION_REGEX.match(original_text.strip()):
+            if "agent" not in valid_cats:
+                valid_cats.append("agent")
+
+    # 3. Call to Action Exclusivity: An agent task / call to action is never a 'life' entry
+    if "agent" in valid_cats and "life" in valid_cats:
+        valid_cats.remove("life")
 
     return valid_cats if valid_cats else ["life"]
 
@@ -763,7 +796,7 @@ def sync_task(task_dict):
 
 def write_to_inbox(original_filename, detected_lang, original_text, llm_content):
     """Parses LLM output, applies frontmatter schema, and writes note files atomically."""
-    categories = parse_categories_from_llm(llm_content)
+    categories = parse_categories_from_llm(llm_content, original_text=original_text)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     base_name, _ = os.path.splitext(original_filename)
     output_filename = f"VoiceNote-{timestamp}.md"

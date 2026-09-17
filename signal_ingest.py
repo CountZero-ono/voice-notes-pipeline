@@ -416,7 +416,7 @@ def process_signal_envelope(envelope, loop):
                 if sender:
                     loop.run_in_executor(worker_pool, send_signal_message, sender, "⏳ Voice note received! Transcribing & processing...")
                 # Dispatch background processing to thread pool
-                loop.run_in_executor(worker_pool, process_audio_attachment_sync, att_id, sender)
+                loop.run_in_executor(worker_pool, process_incoming_voice_note, att_id, sender)
                 return
 
     # Handle Text Interactive Commands

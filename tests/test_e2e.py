@@ -195,5 +195,55 @@ Fix Russian extraction regression by enforcing English in system prompt.
         self.assertIn("agent-backlog", fm.get("tags", []))
         self.assertIn("voice-notes-pipeline", body)
 
+    def test_invocational_lead_and_passive_mention_rules(self):
+        # Case A: Opening Invocational Lead overrides lazy 'life' LLM classification
+        llm_lazy_life = """---
+categories:
+  - life
+title: "Voice Note: Test"
+---
+# Cleaned Transcript
+Gemini, нужно поправить классификацию.
+"""
+        cats_call = voice_harvester.parse_categories_from_llm(
+            llm_lazy_life,
+            original_text="Gemini, нужно поправить классификацию."
+        )
+        self.assertIn("agent", cats_call)
+        self.assertNotIn("life", cats_call, "Agent call to action must purge 'life' category")
+
+        # Case B: Opening with filler + agent name also triggers Call to Action
+        cats_filler = voice_harvester.parse_categories_from_llm(
+            llm_lazy_life,
+            original_text="Так, Gemini, разберись с роутингом."
+        )
+        self.assertIn("agent", cats_filler)
+        self.assertNotIn("life", cats_filler)
+
+        # Case C: Passive mention in middle of sentence does NOT trigger agent, stays life
+        cats_passive = voice_harvester.parse_categories_from_llm(
+            llm_lazy_life,
+            original_text="Вчера читал статью про Claude и Gemini, интересные мысли по поводу архитектуры."
+        )
+        self.assertEqual(cats_passive, ["life"], "Passive mention without opening lead must stay in life")
+
+        # Case D: Manual tag override in frontmatter promotes to agent even without opening lead
+        llm_with_tag = """---
+categories:
+  - life
+tags:
+  - agent
+---
+# Cleaned Transcript
+Нужно имплементировать функцию скриншотов.
+"""
+        cats_tagged = voice_harvester.parse_categories_from_llm(
+            llm_with_tag,
+            original_text="Нужно имплементировать функцию скриншотов."
+        )
+        self.assertIn("agent", cats_tagged)
+        self.assertNotIn("life", cats_tagged)
+
 if __name__ == "__main__":
     unittest.main()
+

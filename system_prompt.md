@@ -12,10 +12,14 @@ You will be given:
 Analyze the raw transcript and determine which categories apply. You can tag **multiple** categories if the note contains overlapping topics. List all applicable categories inside the YAML frontmatter under the `categories` key.
 
 Categories definitions:
-1.  **`appointments`**: Any calendar appointments, meetings, tasks, reminders, to-dos, deadlines, or scheduled events.
-2.  **`technical`**: Any programming code, CLI commands, database operations, homelab infrastructure, configuration parameters, hardware specs, network topology, scientific facts, recipes, or formal methods.
-3.  **`life`**: General daily logs, journal entries, feelings, movie reviews, unstructured thoughts, or casual dictation that does not contain scheduling information or technical specifications.
-4.  **`agent`**: Any explicit tasks, bug reports, feature requests, code modifications, or technical instructions intended for AI coding assistants/agents (e.g., requests mentioning "Gemini", "Antigravity", "Claude", "Agent", "Qwen", or dictating specific code fixes, refactors, automation, or backlog tasks).
+1.  **`agent` (Call to Action / Backlog Directive)**:
+    *   **STRICT INVOCATIONAL LEAD RULE:** A note is classified as `agent` ONLY if the speaker directly addresses an AI assistant by name at the very **BEGINNING** of the message (within the first 1–4 words, allowing for natural greetings/fillers like "Hey", "Эй", "Так", "Ну", "So", "OK"):
+        - Target Names: `Gemini`, `Antigravity`, `Claude`, `Agent`, `Dixie`, `Qwen` (or `Gwen`, `Джемини`, `Гемини`, `Дикси`, `Антигравити`, `Клод`, `Агент`, `Квен`).
+        - When an opening agent invocation is present, this note is an explicit **Call for Action**. It MUST be tagged with category `agent` and is **STRICTLY FORBIDDEN** from being categorized as `life`.
+    *   **PASSIVE MENTION EXCLUSION:** If an agent's name appears only in the middle or end of a sentence as reference or commentary (e.g., *"I was reading about Claude"*, *"вчера сравнивал Gemini и Qwen"*, *"надо будет потом обсудить с Gemini"*), do **NOT** classify as `agent`. Route to `technical` (if technical discussion) or `life` (if casual reflection).
+2.  **`appointments`**: Any calendar appointments, meetings, tasks, reminders, to-dos, deadlines, or scheduled events.
+3.  **`technical`**: Any programming code, CLI commands, database operations, homelab infrastructure, configuration parameters, hardware specs, network topology, scientific facts, recipes, or formal methods.
+4.  **`life`**: General daily logs, journal entries, feelings, movie reviews, unstructured thoughts, or casual dictation that does not contain scheduling information, technical specifications, or an opening agent invocation.
 
 ---
 

@@ -3,6 +3,20 @@
 All notable changes to the Voice Notes Pipeline will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [2.5.1] - 2026-09-17
+
+### Added
+- **Invocational Lead Rule for Agent Call to Action:**
+  - Standardized in `system_prompt.md` and `voice_harvester.py` that voice notes are classified as `agent` (Call to Action $\rightarrow$ `AgentBacklog`) if and only if the speaker directly addresses an agent by name at the beginning of the message (allowing for natural fillers like "Hey", "Эй", "Так", "Ну").
+  - Target names supported in Latin and Cyrillic: `Gemini`, `Antigravity`, `Claude`, `Agent`, `Dixie`, `Qwen`/`Gwen` (`Джемини`, `Гемини`, `Дикси`, `Антигравити`, `Клод`, `Агент`, `Квен`).
+  - Added deterministic regex pre-check (`AGENT_INVOCATION_REGEX`) and frontmatter `tags` inspector in `voice_harvester.parse_categories_from_llm()`.
+  - Passive mentions of agents in the middle/end of sentences remain as context in `technical` or `life`.
+  - Enforced exclusivity: if `agent` is active, `life` is stripped from categories so action items are never routed into `Life/`.
+  - Added unit test suite covering invocational leads, fillers, passive mentions, and manual tag overrides (13/13 tests passing).
+
+### Fixed
+- **Signal Audio Dispatch Target Name:** Fixed `NameError: name 'process_audio_attachment_sync' is not defined` in `signal_ingest.py` by pointing thread pool dispatch to `process_incoming_voice_note`.
+
 ## [2.5.0] - 2026-09-11
 
 ### Added

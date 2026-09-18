@@ -3,6 +3,13 @@
 All notable changes to the Voice Notes Pipeline will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [2.5.2] - 2026-09-18
+
+### Changed
+- **OpenRouter Tier-2 Failover Migration:** Migrated Tier-2 cloud extraction fallback from deprecated b.ai API to OpenRouter (`https://openrouter.ai/api/v1/chat/completions`) using `qwen/qwen3.8-flash`.
+- **Dynamic Credential Discovery:** Added multi-path resolution in `get_openrouter_api_key()` checking environment (`OPENROUTER_API_KEY`), local `.env`, `~/.hermes/.env`, and `~/Documents/openrouter.txt`.
+- **Backward Compatibility:** Preserved `get_bai_api_key`, `extract_llm_cloud_qwen`, `BAI_API_URL`, and `BAI_MODEL` aliases for existing cascade callers and tests.
+
 ## [2.5.1] - 2026-09-17
 
 ### Added

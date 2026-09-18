@@ -67,10 +67,14 @@ def get_gateway_url():
     return "http://192.168.1.37:8090/v1"
 
 
-# Cloud Failover Configuration ("qwen_cloud", "vertex", or "none")
-CLOUD_FAILOVER_PROVIDER = os.environ.get("VOICE_CLOUD_FAILOVER", "qwen_cloud").lower()
-BAI_API_URL = os.environ.get("BAI_API_URL", "https://api.b.ai/v1/chat/completions")
-BAI_MODEL = os.environ.get("BAI_MODEL", "qwen3.8-flash")
+# Cloud Failover Configuration ("openrouter", "qwen_cloud", "vertex", or "none")
+CLOUD_FAILOVER_PROVIDER = os.environ.get("VOICE_CLOUD_FAILOVER", "openrouter").lower()
+OPENROUTER_API_URL = os.environ.get("OPENROUTER_API_URL", "https://openrouter.ai/api/v1/chat/completions")
+OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "qwen/qwen3.8-flash")
+
+# Backward compatibility aliases
+BAI_API_URL = OPENROUTER_API_URL
+BAI_MODEL = OPENROUTER_MODEL
 
 # Whisper Config
 WHISPER_MODEL_NAME = os.environ.get("WHISPER_MODEL", "large-v3-turbo")
@@ -427,12 +431,12 @@ def clean_and_extract_llm(raw_text, max_retries=3, initial_backoff=2):
         logging.warning(f"Direct local LLM failed: {e}")
 
     # Tier-2/Tier-3 Failover Cascade
-    if CLOUD_FAILOVER_PROVIDER == "qwen_cloud":
-        logging.warning("All local LLM attempts failed. Initiating Tier-2 Cloud Failover to b.ai Qwen...")
-        cloud_output = extract_llm_cloud_qwen(messages)
+    if CLOUD_FAILOVER_PROVIDER in ("openrouter", "qwen_cloud"):
+        logging.warning("All local LLM attempts failed. Initiating Tier-2 Cloud Failover to OpenRouter Cloud...")
+        cloud_output = extract_llm_cloud_openrouter(messages)
         if cloud_output:
             return cloud_output
-        logging.warning("b.ai Qwen failover failed or unavailable. Cascading to Tier-3 Vertex AI Gemini Flash safety net...")
+        logging.warning("OpenRouter failover failed or unavailable. Cascading to Tier-3 Vertex AI Gemini Flash safety net...")
         cloud_output = extract_llm_vertex_gemini(messages)
         if cloud_output:
             return cloud_output
@@ -448,31 +452,39 @@ def clean_and_extract_llm(raw_text, max_retries=3, initial_backoff=2):
     return None
 
 
-def get_bai_api_key():
-    """Retrieve b.ai API key from environment or ~/.hermes/bai.env."""
-    key = os.environ.get("B_API_KEY") or os.environ.get("BAI_API_KEY")
+def get_openrouter_api_key():
+    """Retrieve OpenRouter API key from environment, .env, or ~/.hermes/.env."""
+    key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("B_API_KEY")
     if key:
         return key.strip()
-    env_path = os.path.expanduser("~/.hermes/bai.env")
-    if os.path.exists(env_path):
-        try:
-            with open(env_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line.startswith("B_API_KEY="):
-                        return line.split("=", 1)[1].strip().strip('"').strip("'")
-                    if line.startswith("CUSTOM_API_KEY="):
-                        return line.split("=", 1)[1].strip().strip('"').strip("'")
-        except Exception as e:
-            logging.debug(f"Error reading ~/.hermes/bai.env: {e}")
+    env_paths = [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"),
+        os.path.expanduser("~/.hermes/.env"),
+        os.path.expanduser("~/Documents/openrouter.txt"),
+    ]
+    for env_path in env_paths:
+        if os.path.exists(env_path):
+            try:
+                with open(env_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith("OPENROUTER_API_KEY="):
+                            return line.split("=", 1)[1].strip().strip('"').strip("'")
+                        if env_path.endswith("openrouter.txt") and line.startswith("sk-or-"):
+                            return line.split("#")[0].strip().strip('"').strip("'")
+            except Exception as e:
+                logging.debug(f"Error reading {env_path}: {e}")
     return None
 
 
-def extract_llm_cloud_qwen(messages):
-    """Tier-2 Cloud Failover: calls Qwen 3.8 Flash via b.ai custom API."""
-    api_key = get_bai_api_key()
+get_bai_api_key = get_openrouter_api_key
+
+
+def extract_llm_cloud_openrouter(messages):
+    """Tier-2 Cloud Failover: calls DeepSeek V4.1 / Qwen Flash via OpenRouter API."""
+    api_key = get_openrouter_api_key()
     if not api_key:
-        logging.warning("b.ai API key not found in env (B_API_KEY) or ~/.hermes/bai.env; skipping cloud Qwen.")
+        logging.warning("OpenRouter API key not found in env or .env; skipping cloud LLM.")
         return None
 
     headers = {
@@ -480,24 +492,26 @@ def extract_llm_cloud_qwen(messages):
         "Content-Type": "application/json"
     }
     payload = {
-        "model": BAI_MODEL,
+        "model": OPENROUTER_MODEL,
         "messages": messages,
         "temperature": 0.1,
         "max_tokens": 1200,
-        "chat_template_kwargs": {"reasoning_effort": "low"},
         "stream": False
     }
     try:
-        logging.info(f"Requesting completion from b.ai Cloud Qwen ({BAI_MODEL})...")
-        resp = requests.post(BAI_API_URL, headers=headers, json=payload, timeout=30)
+        logging.info(f"Requesting completion from OpenRouter Cloud ({OPENROUTER_MODEL})...")
+        resp = requests.post(OPENROUTER_API_URL, headers=headers, json=payload, timeout=30)
         resp.raise_for_status()
         res_json = resp.json()
         content = res_json['choices'][0]['message']['content']
-        logging.info(f"Tier-2 b.ai Cloud Qwen ({BAI_MODEL}) response received successfully.")
+        logging.info(f"Tier-2 OpenRouter Cloud ({OPENROUTER_MODEL}) response received successfully.")
         return content
     except Exception as e:
-        logging.error(f"Tier-2 b.ai Cloud Qwen failover failed: {e}")
+        logging.error(f"Tier-2 OpenRouter Cloud failover failed: {e}")
         return None
+
+
+extract_llm_cloud_qwen = extract_llm_cloud_openrouter
 
 
 def extract_llm_vertex_gemini(messages):

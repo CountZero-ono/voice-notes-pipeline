@@ -5,14 +5,13 @@ Provides atomic upload and update of Markdown notes to Seafile repository via RE
 
 import os
 import logging
+import urllib.parse
 from typing import Optional, Union
 import requests
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_SEAFILE_URL = "https://seafile.eyenology.net"
-DEFAULT_SEAFILE_TOKEN = "f3e8426ae8eb1f9bc44924516dab00172f0bdbcc"
-DEFAULT_SEAFILE_REPO_ID = "fbe02384-2e6d-4cd1-b013-a596673dab90"
 DEFAULT_SEAFILE_BASE_PATH = "/VoiceNotes/Inbox"
 
 
@@ -31,15 +30,8 @@ class SeafileVaultClient:
         else:
             self.server_url = os.environ.get("SEAFILE_URL", DEFAULT_SEAFILE_URL).rstrip("/")
 
-        if token is not None:
-            self.token = token
-        else:
-            self.token = os.environ.get("SEAFILE_TOKEN", DEFAULT_SEAFILE_TOKEN)
-
-        if repo_id is not None:
-            self.repo_id = repo_id
-        else:
-            self.repo_id = os.environ.get("SEAFILE_REPO_ID", DEFAULT_SEAFILE_REPO_ID)
+        self.token = token if token is not None else os.environ.get("SEAFILE_TOKEN")
+        self.repo_id = repo_id if repo_id is not None else os.environ.get("SEAFILE_REPO_ID")
 
         raw_base = base_path if base_path is not None else os.environ.get("SEAFILE_BASE_PATH", DEFAULT_SEAFILE_BASE_PATH)
         self.base_path = raw_base.rstrip("/")
@@ -60,7 +52,8 @@ class SeafileVaultClient:
         """Requests an upload link for a target parent directory in Seafile repo."""
         if not self.is_configured:
             return None
-        url = f"{self.server_url}/api2/repos/{self.repo_id}/upload-link/?p={parent_dir}"
+        encoded_dir = urllib.parse.quote(parent_dir, safe='/')
+        url = f"{self.server_url}/api2/repos/{self.repo_id}/upload-link/?p={encoded_dir}"
         try:
             resp = requests.get(url, headers=self._get_headers(), timeout=10)
             resp.raise_for_status()
@@ -75,7 +68,8 @@ class SeafileVaultClient:
         """Requests an update link for an existing file in target parent directory."""
         if not self.is_configured:
             return None
-        url = f"{self.server_url}/api2/repos/{self.repo_id}/update-link/?p={parent_dir}"
+        encoded_dir = urllib.parse.quote(parent_dir, safe='/')
+        url = f"{self.server_url}/api2/repos/{self.repo_id}/update-link/?p={encoded_dir}"
         try:
             resp = requests.get(url, headers=self._get_headers(), timeout=10)
             resp.raise_for_status()

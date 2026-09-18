@@ -41,6 +41,7 @@ class TestVoiceNotesFallbackCascade(unittest.TestCase):
         self.orig_load_whisper = voice_harvester.load_whisper
         self.orig_llm_url = voice_harvester.LLM_API_URL
         self.orig_bai_url = voice_harvester.BAI_API_URL
+        self.orig_openrouter_url = getattr(voice_harvester, "OPENROUTER_API_URL", "")
         self.orig_failover_provider = voice_harvester.CLOUD_FAILOVER_PROVIDER
         self.orig_bama_gateway_url = getattr(voice_harvester, "BAMA_GATEWAY_URL", "")
 
@@ -51,6 +52,9 @@ class TestVoiceNotesFallbackCascade(unittest.TestCase):
         voice_harvester.STATE_FILE = self.sandbox_state
         voice_harvester.DRY_RUN = False
 
+        self.orig_gateway_fn = getattr(voice_harvester, "get_gateway_url", None)
+        voice_harvester.get_gateway_url = lambda: "http://127.0.0.1:59997/v1"
+
         self.fixture_path = os.path.join(
             os.path.dirname(__file__), "fixtures", "20260712_103726.m4a"
         )
@@ -58,6 +62,8 @@ class TestVoiceNotesFallbackCascade(unittest.TestCase):
 
     def tearDown(self):
         # Restore configuration
+        if self.orig_gateway_fn:
+            voice_harvester.get_gateway_url = self.orig_gateway_fn
         voice_harvester.RAW_DIR = self.orig_raw
         voice_harvester.INBOX_DIR = self.orig_inbox
         voice_harvester.ARCHIVE_DIR = self.orig_archive
@@ -66,6 +72,7 @@ class TestVoiceNotesFallbackCascade(unittest.TestCase):
         voice_harvester.load_whisper = self.orig_load_whisper
         voice_harvester.LLM_API_URL = self.orig_llm_url
         voice_harvester.BAI_API_URL = self.orig_bai_url
+        voice_harvester.OPENROUTER_API_URL = self.orig_openrouter_url
         voice_harvester.CLOUD_FAILOVER_PROVIDER = self.orig_failover_provider
         voice_harvester.BAMA_GATEWAY_URL = self.orig_bama_gateway_url
 
@@ -106,6 +113,7 @@ class TestVoiceNotesFallbackCascade(unittest.TestCase):
         """Simulate local Qwen AND b.ai failure, assert Tier-3 Vertex AI Gemini takes over."""
         voice_harvester.LLM_API_URL = "http://127.0.0.1:59999/v1/chat/completions"
         voice_harvester.BAI_API_URL = "http://127.0.0.1:59998/v1/chat/completions"
+        voice_harvester.OPENROUTER_API_URL = "http://127.0.0.1:59998/v1/chat/completions"
         voice_harvester.CLOUD_FAILOVER_PROVIDER = "qwen_cloud"
 
         sample_prompt = (

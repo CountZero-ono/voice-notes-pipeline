@@ -3,6 +3,14 @@
 All notable changes to the Voice Notes Pipeline will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [2.5.3] - 2026-09-19
+
+### Fixed
+- **Seafile URL Path Quoting:** Fixed HTTP 400 silent upload failures in `seafile_sync.py` by applying `urllib.parse.quote(parent_dir, safe='/')` in `get_upload_link()` and `get_update_link()` for nested directory paths.
+- **Credential Hygiene:** Removed hardcoded default Seafile token and repo ID fallbacks in `seafile_sync.py`, strictly enforcing environment configuration.
+- **OpenRouter Reasoning Control:** Added `"reasoning": {"effort": "none"}` and fallback extraction for `choice.message.reasoning` in `extract_llm_cloud_openrouter()`, eliminating token cutoffs and reducing Tier-2 failover latency to <1s.
+- **Cascade Unit Test Isolation:** Updated `tests/test_fallback_cascade.py` to mock `get_gateway_url` and isolate `OPENROUTER_API_URL`, ensuring all 4 failover tiers (Groq STT, OpenRouter LLM, Vertex AI LLM, End-to-End note generation) execute and verify deterministically without hitting live gateway endpoints.
+
 ## [2.5.2] - 2026-09-18
 
 ### Changed

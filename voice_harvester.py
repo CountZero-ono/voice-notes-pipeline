@@ -496,14 +496,18 @@ def extract_llm_cloud_openrouter(messages):
         "messages": messages,
         "temperature": 0.1,
         "max_tokens": 1200,
-        "stream": False
+        "stream": False,
+        "reasoning": {"effort": "none"}
     }
     try:
         logging.info(f"Requesting completion from OpenRouter Cloud ({OPENROUTER_MODEL})...")
         resp = requests.post(OPENROUTER_API_URL, headers=headers, json=payload, timeout=30)
         resp.raise_for_status()
         res_json = resp.json()
-        content = res_json['choices'][0]['message']['content']
+        choice_msg = res_json['choices'][0]['message']
+        content = choice_msg.get('content') or ""
+        if not content and choice_msg.get('reasoning'):
+            content = choice_msg['reasoning']
         logging.info(f"Tier-2 OpenRouter Cloud ({OPENROUTER_MODEL}) response received successfully.")
         return content
     except Exception as e:

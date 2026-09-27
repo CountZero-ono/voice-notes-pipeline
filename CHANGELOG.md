@@ -3,6 +3,33 @@
 All notable changes to the Voice Notes Pipeline will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [2.6.1] - 2026-09-27
+
+### Fixed
+- **Option B Signal Eavesdropping & 1-on-1 DM Quarantine:**
+  - Added `FAMILY_NOTES_GROUP_ID` binding for the dedicated "Family Notes" group (`group.M0VLQVlkc3RqcHRTZnBPRGdNS0d0Yzd5bDVmR3A1WE9BZ3c1a1pvUU1Lcz0=`).
+  - Implemented strict 1-on-1 DM privacy isolation: all outgoing sync messages with external destinations (Veronika, friends, clients) and all inbound 1-on-1 DMs from third parties are dropped silently.
+  - Enabled group-level routing: messages originating in "Family Notes" receive responses directly inside the group for shared transparency.
+  - Suppressed unprompted fallback error spam (`❓ Команда не распознана`) in groups and casual text messages.
+
+## [2.6.0] - 2026-09-27
+
+### Added
+- **Multi-User Signal Ingress (Veronika +994519325767):**
+  - Added multi-user authorization whitelist in `signal_ingest.py` supporting both Fuad (`+994502214707`) and Veronika (`+994519325767`).
+  - Added sender recognition (`get_sender_name`) with cross-notification (notifies Fuad when Veronika adds shopping items or tasks).
+  - Added author attribution (`author: Veronika`) to Obsidian frontmatter and metadata for non-shopping voice notes.
+- **12-Hour Rolling Session Shopping Engine (`shopping_manager.py`):**
+  - Implemented 12-hour session window: additions within 12h append to the active run, allowing items to be remembered and added hours apart.
+  - Zombie item prevention: when the 12h TTL elapses, forgotten unchecked items (`- [ ]`) auto-archive into `## Expired / Session Archive` and are cleared from active Google Tasks so they do not pollute subsequent shopping trips.
+  - Master Pantry Catalog: permanently accumulates every unique grocery item added into `## Master Pantry Catalog` for historical tracking and auto-complete.
+  - Dual-store synchronization across Obsidian `Life/Shopping List.md`, Seafile REST API (`/Life`), and Google Tasks `Shopping` list.
+- **Tri-Modal Grocery Input Support:**
+  - **Vision OCR:** Multimodal extraction (Gemini 2.5 Flash) parsing grocery screenshots/photos (e.g. phone note screenshots) directly into structured lists.
+  - **Natural Text:** Russian grocery parsing (`купи сыр, хлеб`, `в список: ...`, `что купить?`, `вычеркни молоко`).
+  - **Voice Notes:** Spoken grocery list detection and automatic routing directly to the active shopping session.
+- **Parity with Dixie Ball:** Dixie Ball workstation tools (`services/desktop_tools.py`) refactored to share `shopping_manager.py`, ensuring 100% state and schema consistency between desktop voice and mobile Signal.
+
 ## [2.5.3] - 2026-09-19
 
 ### Fixed
